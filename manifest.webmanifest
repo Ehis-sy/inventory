@@ -1,6 +1,6 @@
 {
-  "name": "GANKCO Inventory Management",
-  "short_name": "GANKCO Inventory",
+  "name": "GANKCO Nest",
+  "short_name": "GANKCO Nest",
   "start_url": "./",
   "scope": "./",
   "display": "standalone",

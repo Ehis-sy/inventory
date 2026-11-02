@@ -1,61 +1,70 @@
-# GANKCO Inventory Management: setup guide
+# GANKCO Nest: upgrade to version 2.0
 
-A web app for the team to track equipment: check-out and return, stock by location,
-certificates and maintenance, reorder alerts, QR labels and Excel export.
-It runs on GitHub Pages (the website) and Supabase (logins and database).
+*Built to support engineered solutions.*
 
-## 1. Set up the database (once)
+Version 2.0 turns the inventory app into **GANKCO Nest**: one sign-in, then a launcher with **Inventory** now and **Sales & Finance** later.
 
-1. In Supabase, open your project, then **SQL Editor → New query**.
-2. Open `inventory-setup.sql`, copy everything, paste it in, and press **Run**.
-   If Supabase warns about "destructive operations", confirm. That warning is about
-   the lines that make the script safe to run twice.
-3. You should see "Success". This creates the tables and security rules, and imports
-   the 461 items from the October 2026 sheet into **Main Store**.
+## Before you start
 
-## 2. Supabase login settings
+Ask the team to stop using the app for about 15 minutes. Nothing is lost, but changes made in the middle of the upgrade could fail.
 
-1. **Authentication → Sign In / Providers → Email**: turn **off** "Confirm email".
-   Admin approval already controls who gets in, and Supabase's free email service
-   only sends a few emails per hour.
-2. **Authentication → URL Configuration**: set **Site URL** to your GitHub Pages link
-   (for example `https://YOUR-USERNAME.github.io/inventory/`). Add the same link under
-   **Redirect URLs**. Password-reset emails need this.
+## Step 1: Upgrade the database (Supabase)
 
-## 3. Put the website on GitHub Pages
+1. Open your project in Supabase and go to **SQL Editor → New query**.
+2. Open **`1-nest-upgrade.sql`**, copy everything, paste it in and press **Run**. If Supabase warns about "destructive operations", confirm. Wait for **Success**.
+3. Start another **New query**. Paste in **`2-nest-history.sql`** and press **Run**. This loads the 17 monthly sheets (Dec 2024 to Oct 2026) so month-to-month comparisons work.
 
-1. On GitHub, create a new **public** repository called `inventory`.
-2. Choose **Add file → Upload files**. Drag in everything from this folder, including
-   the `vendor` and `fonts` folders. Then commit.
-3. Go to **Settings → Pages**. Under Source, pick **Deploy from a branch**, then
-   **main** and **/ (root)**. Save.
-4. After 1–2 minutes your link appears at the top of that page.
+Both files are safe to run again: nothing gets duplicated.
 
-The code is public, but the inventory data is not: nobody can read anything without
-an approved login.
+What the upgrade changes:
+- Your account becomes **Super Admin**. Everyone else keeps their role (Admin or Staff).
+- Every existing admin and staff member is temporarily given **all four service lines**. You narrow this down in step 3.
+- The "Main Store" placeholder is renamed **Location not set**. **Port Harcourt** and **Warri** are added.
+- Redress-kit items are flagged so their kit numbers and expiry dates can be tracked.
 
-## 4. First sign-in
+## Step 2: Update the website (GitHub)
 
-1. Open the link and choose **Create an account**. **The first account created
-   becomes the admin**, so do this before you share the link.
-2. Send the link to your team. Each person creates an account, then you approve them
-   under **Team** (Staff or Admin).
-3. Make at least one more person an admin, so approvals never wait on one person.
+1. Unzip **`gankco-nest-v2.0.zip`**.
+2. In your `inventory` repository, choose **Add file → Upload files**. Drag in everything from the unzipped folder, including the `js`, `vendor`, `fonts` and `brand` folders, then **Commit**.
+3. Don't delete the file called **`CNAME`** in the repository. It keeps `inventory.gankcoenergy.com` working.
+4. Optional tidy-up: you can delete the old **`app.js`**, **`favicon.svg`** and **`vendor/xlsx.full.min.js`**. Version 2.0 doesn't use them.
+5. Wait 1–2 minutes, then open https://inventory.gankcoenergy.com and press **Ctrl + Shift + R**.
 
-## Day-to-day
+From now on, whenever a new version is published, Nest shows a **"new version available: Reload"** bar, so nobody has to clear their browser.
 
-- **Staff** check equipment out and in, receive deliveries, move stock, change status
-  (reserved, in transit, damaged), issue consumables, sell sales items and record
-  certificates. Their stock counts and write-offs go to an admin for approval.
-- **Admins** also add and edit items, set reorder levels, approve requests, and manage
-  locations and people.
-- **Scan:** print QR labels from Inventory (tick items, then **Print labels**). Any phone
-  camera opens the item from the label. USB or Bluetooth barcode scanners work anywhere
-  in the app.
-- **Export to Excel** on the Inventory page gives one sheet per department plus a
-  restock list, in the same shape as the monthly sheet.
+## Step 3: Set up the team (you, as Super Admin)
 
-## Changing settings later
+Open **Inventory → Team**.
 
-`config.js` holds the Supabase link and key, the app name and the version number.
-Edit it on GitHub (pencil icon) to change them.
+1. **Access:** set your 3 admins to **Admin**. Everyone else stays **Staff**.
+2. **Service lines:** press **Lines** next to each person and tick only the line(s) they work in.
+3. **Who approves for each line:** choose a **main admin** and a **backup admin** for each line. Their approval requests and alerts go to them. You can approve anything.
+4. New people sign up through the link, then appear under **Waiting for approval**. Press **Approve**, tick their line(s), and they're in.
+
+## Step 4: First tasks for each service line
+
+- **Put items in Port Harcourt or Warri.** Everything currently shows as *Location not set*. On Inventory, filter **Location not set**, tick items, then **Move location**. Or use **Excel templates → Item locations**, fill it in, and upload it.
+- **Reorder levels:** admins tick items, choose **Edit details**, and set "Reorder at". Low-stock alerts start working.
+- **Redress kits:** open a kit item and use **Add / update kit**, or use **Excel templates → Redress kits & expiry dates**. Enter one row per component per kit number. Leave the expiry blank if a component doesn't expire.
+
+## How things work
+
+| Task | Where |
+|---|---|
+| Send equipment to a job | **Job tickets → New job ticket**. Add items, **Dispatch**, print the **load-out manifest**, then **Record return** when it comes back (good, damaged, used, sold or missing). |
+| Correct many numbers at once | **Inventory → Edit quantities**. Type the new numbers, then **Review & submit**. Staff changes go to their line's admin as one request. |
+| Monthly count (23rd–26th) | **Monthly count**: start your line's count, tick ✓ or type the real number, then **Submit**. The admin approves, and the month is locked and signed. |
+| Approvals | **Approvals**: approve one request, ticked requests, or **Approve all** for a line. Single lines inside a request can be approved or rejected too. |
+| Alerts | The **bell** shows low stock, faulty items, certificates and kits expiring, the count window, overdue returns and approvals. Email alerts can be switched on once `noreply@gankcoenergy.com` is ready. |
+| Who changed what | **Audit log** (admins). Filter by person, service line, kind of change or date. Edits show the value before and after. |
+| Reports | **Reports**: monthly, quarterly, annual, or compare two months. Download as **PDF** or **Excel**. Both are branded and carry the QMS reference. |
+
+## Roles
+
+- **Staff:** day-to-day work in their own service line(s). They can see all stock but not the Setup section.
+- **Admin:** approves and manages items for their lines, and also handles locations, labels, new staff and the audit log.
+- **Super Admin:** everything, plus creating admins, choosing approvers, settings, and the full audit log.
+
+## Settings
+
+As Super Admin, go to **Settings** to change the count dates, how early kit and certificate warnings appear, and the QMS form details printed on reports.

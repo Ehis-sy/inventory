@@ -1,0 +1,506 @@
+/* GANKCO Nest — core: config, data, auth, shell, routing */
+'use strict';
+const CFG = window.APP_CONFIG;
+const sb = window.supabase.createClient(CFG.SUPABASE_URL, CFG.SUPABASE_ANON_KEY, {
+  auth: { persistSession: true, autoRefreshToken: true, detectSessionInUrl: true }
+});
+
+// ---------------------------------------------------------------- state
+const S = {
+  session: null, profile: null, recovery: false,
+  depts: [], cats: [], locs: [], people: {}, members: [], settings: {},
+  items: null, stock: null, pending: 0, alerts: { unread: 0, reminders: [] },
+  line: (() => { try { return localStorage.getItem('nest.line') || ''; } catch (e) { return ''; } })(),
+  inv: { q: '', cat: '', type: '', loc: '', view: 'all', moved: '', sel: new Set(), edit: false, changes: new Map() },
+  co: { view: 'open', q: '' },
+  act: { type: '', from: '', to: '', q: '', rows: [], done: false },
+  certs: { view: 'soon', tab: 'certs' },
+  appr: { view: 'pending', sel: new Set() },
+  shellReady: false, channel: null,
+};
+
+// ---------------------------------------------------------------- helpers
+const $ = (s, el = document) => el.querySelector(s);
+const $$ = (s, el = document) => [...el.querySelectorAll(s)];
+const esc = v => String(v ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+const num = v => (v === null || v === undefined || v === '') ? null : Number(v);
+const fq = n => n == null ? '—' : (+n).toLocaleString('en-GB', { maximumFractionDigits: 2 });
+const fd = d => d ? new Date(String(d).length === 10 ? d + 'T00:00:00' : d).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' }) : '—';
+const fdt = d => d ? new Date(d).toLocaleString('en-GB', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' }) : '—';
+const fmonth = m => m ? new Date(String(m).slice(0, 7) + '-01T00:00:00').toLocaleDateString('en-GB', { month: 'long', year: 'numeric' }) : '—';
+const localISO = (offsetDays = 0) => { const d = new Date(); d.setDate(d.getDate() + offsetDays); d.setMinutes(d.getMinutes() - d.getTimezoneOffset()); return d.toISOString().slice(0, 10); };
+const monthISO = (d = new Date()) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-01`;
+const debounce = (fn, ms) => { let t; return (...a) => { clearTimeout(t); t = setTimeout(() => fn(...a), ms); }; };
+const tag = (code, cls = '') => code ? `<span class="tag ${cls}">${esc(code)}</span>` : `<span class="tag none ${cls}">No code</span>`;
+const chip = (cls, text) => `<span class="chip ${cls}">${esc(text)}</span>`;
+const ORG = CFG.ORG_SHORT || 'GANKCO';
+const wordmark = () => `<span class="wordmark"><span class="a">${esc(ORG.slice(0, 3))}</span><span class="b">${esc(ORG.slice(3))}</span></span>`;
+const itemUrl = id => `${location.origin}${location.pathname}#/item/${id}`;
+const ord = n => { n = +n; const s = ['th', 'st', 'nd', 'rd'], v = n % 100; return n + (s[(v - 20) % 10] || s[v] || s[0]); };
+const plural = (n, w, p) => `${fq(n)} ${n == 1 ? w : (p || w + 's')}`;
+const STATUS = { available: 'Available', reserved: 'Reserved', in_transit: 'In transit', damaged: 'Damaged' };
+const TYPES = { equipment: 'Equipment (returns)', consumable: 'Consumable', sales: 'Sales item' };
+const TYPE_SHORT = { equipment: 'Equipment', consumable: 'Consumable', sales: 'Sales' };
+const CERT_KINDS = { certification: 'Certification', calibration: 'Calibration', maintenance: 'Maintenance', inspection: 'Inspection', pressure_test: 'Pressure test' };
+const ROLE_LABEL = { pending: 'Waiting for approval', staff: 'Staff', admin: 'Admin', superadmin: 'Super Admin', disabled: 'No access' };
+
+// roles & service lines
+const role = () => S.profile?.role;
+const isSuper = () => role() === 'superadmin';
+const isAdmin = () => ['admin', 'superadmin'].includes(role());
+const isActive = () => ['staff', 'admin', 'superadmin'].includes(role());
+const myLineIds = () => isSuper() ? S.depts.map(d => d.id) : S.members.filter(m => m.profile_id === S.profile?.id).map(m => m.department_id);
+const inLine = d => myLineIds().includes(+d);
+const canAct = d => isSuper() || role() === 'admin' || (role() === 'staff' && inLine(d));
+const canAdmin = d => isSuper() || (role() === 'admin' && inLine(d));
+const lineName = id => S.depts.find(d => d.id === +id)?.name || '—';
+const lineShort = id => { const d = S.depts.find(x => x.id === +id); return d ? (d.short_name || d.name) : '—'; };
+const locName = id => S.locs.find(l => l.id === +id)?.name || '—';
+const placeholderLoc = () => S.locs.find(l => l.is_placeholder);
+const realLocs = () => S.locs.filter(l => l.active && !l.is_placeholder);
+const personName = (id, fallback = '') => { const p = S.people[id]; return p ? (p.full_name || p.email) : fallback; };
+const setting = (k, d) => S.settings[k] ?? d;
+
+function niceError(e) {
+  const m = (e && (e.message || e.error_description || e.msg)) || String(e);
+  if (/permission denied|row-level security/i.test(m)) return 'You don’t have permission to do that.';
+  if (/JWT expired|invalid JWT/i.test(m)) return 'Your sign-in expired. Sign in again.';
+  if (/Failed to fetch|NetworkError|Load failed/i.test(m)) return 'Can’t reach the server. Check your internet connection and try again.';
+  if (/rate limit/i.test(m)) return 'Too many emails were sent in the last hour. Try again later, or ask an admin.';
+  return m.replace(/^.*?ERROR:\s*/, '');
+}
+async function q(p) { const { data, error } = await p; if (error) throw new Error(niceError(error)); return data; }
+async function fetchAll(make) {
+  const out = []; const size = 1000;
+  for (let from = 0; ; from += size) {
+    const rows = await q(make().range(from, from + size - 1));
+    out.push(...rows); if (rows.length < size) break;
+  }
+  return out;
+}
+function toast(msg, bad = false) {
+  const t = document.createElement('div'); t.className = 'toast' + (bad ? ' bad' : ''); t.textContent = msg;
+  $('#toasts').appendChild(t); setTimeout(() => t.remove(), bad ? 6500 : 3200);
+}
+function loadScript(src) {
+  return new Promise((res, rej) => {
+    if ($(`script[data-src="${src}"]`)) return res();
+    const s = document.createElement('script'); s.src = src + '?v=' + encodeURIComponent(CFG.VERSION || ''); s.dataset.src = src;
+    s.onload = res; s.onerror = () => rej(new Error('Could not load ' + src + '. Check your connection.'));
+    document.head.appendChild(s);
+  });
+}
+function parseHash() {
+  const h = location.hash.replace(/^#\/?/, '');
+  const [path, qs] = h.split('?');
+  return { parts: path.split('/').filter(Boolean), params: new URLSearchParams(qs || '') };
+}
+function go(h) { if (location.hash === h) render(); else location.hash = h; }
+function setLine(v) { S.line = v ? String(v) : ''; try { localStorage.setItem('nest.line', S.line); } catch (e) { } }
+
+// ---------------------------------------------------------------- icons
+const I = {
+  home: '<path d="M3 11l9-7 9 7v9a1 1 0 0 1-1 1h-5v-6H9v6H4a1 1 0 0 1-1-1z"/>',
+  box: '<path d="M3 7l9-4 9 4v10l-9 4-9-4z"/><path d="M3 7l9 4 9-4M12 11v10"/>',
+  scan: '<path d="M4 8V5a1 1 0 0 1 1-1h3M16 4h3a1 1 0 0 1 1 1v3M20 16v3a1 1 0 0 1-1 1h-3M8 20H5a1 1 0 0 1-1-1v-3"/><path d="M7 12h10"/>',
+  out: '<path d="M14 4h5a1 1 0 0 1 1 1v14a1 1 0 0 1-1 1h-5"/><path d="M10 8l-4 4 4 4M6 12h10"/>',
+  truck: '<path d="M2 6h11v10H2zM13 10h4l3 3v3h-7z"/><circle cx="6" cy="17.5" r="1.8"/><circle cx="16.5" cy="17.5" r="1.8"/>',
+  clock: '<circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/>',
+  cert: '<path d="M12 3l7 3v5c0 5-3 8-7 10-4-2-7-5-7-10V6z"/><path d="M9 12l2 2 4-4"/>',
+  check: '<rect x="4" y="4" width="16" height="16" rx="2"/><path d="M8 12l3 3 5-6"/>',
+  count: '<path d="M9 4h6M9 4a1 1 0 0 0-1 1v1h8V5a1 1 0 0 0-1-1M8 6H6a1 1 0 0 0-1 1v13a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1V7a1 1 0 0 0-1-1h-2"/><path d="M9 13l2 2 4-4"/>',
+  chart: '<path d="M4 20V10M10 20V4M16 20v-7M22 20H2"/>',
+  pin: '<path d="M12 21s7-6.2 7-12a7 7 0 0 0-14 0c0 5.8 7 12 7 12z"/><circle cx="12" cy="9" r="2.5"/>',
+  users: '<circle cx="9" cy="8" r="3.5"/><path d="M2.5 20c.8-3.5 3.4-5.5 6.5-5.5s5.7 2 6.5 5.5"/><path d="M16 4.5a3.5 3.5 0 0 1 0 7M18 14.8c1.8.8 3 2.6 3.5 5.2"/>',
+  label: '<path d="M3 12V4a1 1 0 0 1 1-1h8l9 9-9 9z"/><circle cx="7.5" cy="7.5" r="1.5"/>',
+  user: '<circle cx="12" cy="8" r="4"/><path d="M4 21c1-4 4.2-6 8-6s7 2 8 6"/>',
+  audit: '<path d="M5 3h10l4 4v14H5z"/><path d="M15 3v4h4M8 12h8M8 16h5"/>',
+  gear: '<circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/>',
+  bell: '<path d="M6 8a6 6 0 1 1 12 0c0 7 3 8 3 8H3s3-1 3-8"/><path d="M10.3 21a1.9 1.9 0 0 0 3.4 0"/>',
+  grid: '<rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/><rect x="14" y="14" width="7" height="7" rx="1.5"/>',
+  more: '<circle cx="5" cy="12" r="1.6"/><circle cx="12" cy="12" r="1.6"/><circle cx="19" cy="12" r="1.6"/>',
+  plus: '<path d="M12 5v14M5 12h14"/>',
+  down: '<path d="M12 4v11M7 10l5 5 5-5M5 20h14"/>',
+  up: '<path d="M12 20V9M7 14l5-5 5 5M5 4h14"/>',
+  print: '<path d="M7 9V3h10v6M7 17H4v-7h16v7h-3"/><path d="M7 14h10v7H7z"/>',
+  pdf: '<path d="M6 2h9l5 5v15H6z"/><path d="M15 2v5h5M9 13h6M9 17h4"/>',
+  edit: '<path d="M4 20h4L19 9l-4-4L4 16z"/><path d="M14 6l4 4"/>',
+  move: '<path d="M5 12h14M15 8l4 4-4 4M9 16l-4-4 4-4"/>',
+  kit: '<rect x="3" y="7" width="18" height="13" rx="2"/><path d="M8 7V5a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2M3 12h18"/>',
+};
+const ico = n => `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${I[n]}</svg>`;
+
+// ---------------------------------------------------------------- modal
+function modal({ title, sub = '', body, submit = 'Save', cancel = 'Cancel', onSubmit, onOpen, danger = false, wide = false }) {
+  return new Promise(resolve => {
+    const d = document.createElement('dialog'); d.className = 'modal' + (wide ? ' wide' : '');
+    d.innerHTML = `<form method="dialog" novalidate>
+      <div class="mh"><h2>${esc(title)}</h2>${sub ? `<p>${sub}</p>` : ''}</div>
+      <div class="mb"><div class="err" hidden></div>${body}</div>
+      <div class="mf"><button type="button" class="btn" data-x>${esc(cancel)}</button>
+      ${submit ? `<button type="submit" class="btn ${danger ? 'danger' : 'primary'}">${esc(submit)}</button>` : ''}</div></form>`;
+    document.body.appendChild(d);
+    const f = $('form', d), err = $('.err', d), btn = $('button[type=submit]', d);
+    const close = v => { d.close(); d.remove(); resolve(v); };
+    $('[data-x]', d).onclick = () => close(null);
+    d.addEventListener('cancel', e => { e.preventDefault(); close(null); });
+    f.onsubmit = async e => {
+      e.preventDefault(); if (!btn) return; err.hidden = true; btn.disabled = true;
+      const data = Object.fromEntries(new FormData(f).entries());
+      $$('input[type=checkbox]', f).forEach(c => { if (c.name) data[c.name] = c.checked; });
+      try { const r = await onSubmit(data, d); close(r ?? true); }
+      catch (ex) { console.error(ex); err.textContent = niceError(ex); err.hidden = false; btn.disabled = false; d.querySelector('.mb').scrollTop = 0; }
+    };
+    d.showModal();
+    if (onOpen) onOpen(d, close);
+    const first = $('input:not([type=hidden]):not([type=checkbox]):not([type=file]),select,textarea', d); if (first && !first.readOnly) first.focus();
+  });
+}
+const opt = (v, label, sel) => `<option value="${esc(v)}" ${String(sel) === String(v) ? 'selected' : ''}>${esc(label)}</option>`;
+const locOptions = (sel, filter) => S.locs.filter(l => l.active && (!filter || filter(l))).map(l => opt(l.id, l.name, sel)).join('');
+const realLocOptions = sel => locOptions(sel, l => !l.is_placeholder);
+const lineOptions = (sel, filter) => S.depts.filter(d => !filter || filter(d)).map(d => opt(d.id, d.short_name || d.name, sel)).join('');
+
+// ---------------------------------------------------------------- data
+async function loadLookups() {
+  const [depts, cats, locs, people, members, settings] = await Promise.all([
+    q(sb.from('departments').select('*').order('sort')),
+    q(sb.from('categories').select('*').order('sort')),
+    q(sb.from('locations').select('*').order('is_placeholder').order('name')),
+    q(sb.from('profiles').select('id,full_name,email,role,created_at,apps')),
+    q(sb.from('memberships').select('*')),
+    q(sb.from('app_settings').select('*')),
+  ]);
+  S.depts = depts; S.cats = cats; S.locs = locs; S.members = members;
+  S.people = Object.fromEntries(people.map(p => [p.id, p]));
+  S.settings = Object.fromEntries(settings.map(s => [s.key, s.value]));
+}
+async function items(force = false) {
+  if (!S.items || force) {
+    S.items = await fetchAll(() => sb.from('item_overview').select('*').order('department_id').order('import_ref', { nullsFirst: false }).order('id'));
+  }
+  return S.items;
+}
+async function stockRows(force = false) {
+  if (!S.stock || force) S.stock = await fetchAll(() => sb.from('stock').select('item_id,location_id,status,qty').gt('qty', 0));
+  return S.stock;
+}
+function stockOf(itemId, locId, status = 'available') {
+  return +((S.stock || []).find(s => s.item_id === itemId && s.location_id === +locId && s.status === status)?.qty || 0);
+}
+function invalidate() { S.items = null; S.stock = null; }
+const lineFilter = arr => S.line ? arr.filter(x => x.department_id === +S.line) : arr;
+
+// ---------------------------------------------------------------- alerts (bell)
+async function refreshAlerts() {
+  if (!isActive()) return;
+  try {
+    const mine = myLineIds(); const t = localISO(0);
+    const [{ count: unread }, appr, counts, kits, certs, overdue] = await Promise.all([
+      sb.from('notifications').select('id', { count: 'exact', head: true }).is('read_at', null),
+      isAdmin() ? q(sb.from('change_batches').select('id,department_id').eq('state', 'pending')) : [],
+      q(sb.from('counts').select('department_id,state').eq('month', monthISO())),
+      q(sb.from('kit_status').select('unit_id,department_id,expiry_on').lte('expiry_on', localISO(+setting('kit_warn_days', 60))).not('expiry_on', 'is', null)),
+      q(sb.from('certifications').select('id,item_id,items(department_id)').eq('superseded', false).not('due_on', 'is', null).lte('due_on', localISO(+setting('cert_warn_days', 30)))),
+      q(sb.from('checkouts').select('id,items(department_id)').is('closed_at', null).lt('due_back', t)),
+    ]);
+    const R = [];
+    const myAppr = appr.filter(b => canAdmin(b.department_id));
+    S.pending = myAppr.length;
+    if (myAppr.length) R.push({ kind: 'approval', title: `${plural(myAppr.length, 'request')} waiting for your approval`, link: '#/approvals' });
+    const day = new Date().getDate(), open = +setting('count_open_day', 23), close = +setting('count_close_day', 26);
+    const monthName = new Date().toLocaleDateString('en-GB', { month: 'long' });
+    if (day >= open) {
+      mine.forEach(d => {
+        const c = counts.find(x => x.department_id === d);
+        if (c && ['submitted', 'verified'].includes(c.state)) return;
+        R.push(day > close
+          ? { kind: 'late', title: `${lineShort(d)}: ${monthName} count is late`, body: `It was due on the ${ord(close)}.`, link: '#/count' }
+          : { kind: 'count', title: `${lineShort(d)}: ${monthName} count is open`, body: `Submit by the ${ord(close)}.`, link: '#/count' });
+      });
+    } else if (day >= open - 3) {
+      R.push({ kind: 'count', title: `Monthly count opens on the ${ord(open)}`, body: `Due by the ${ord(close)}.`, link: '#/count' });
+    }
+    const km = kits.filter(k => mine.includes(k.department_id));
+    if (km.length) R.push({ kind: 'kit', title: `${plural(km.length, 'redress kit')} expiring or expired`, link: '#/certs?tab=kits' });
+    const cm = certs.filter(c => mine.includes(c.items?.department_id));
+    if (cm.length) R.push({ kind: 'cert', title: `${plural(cm.length, 'certificate')} due within ${setting('cert_warn_days', 30)} days`, link: '#/certs' });
+    const om = overdue.filter(c => mine.includes(c.items?.department_id));
+    if (om.length) R.push({ kind: 'late', title: `${plural(om.length, 'item')} overdue back from jobs`, link: '#/checkouts?v=overdue' });
+    S.alerts = { unread: unread || 0, reminders: R };
+    const n = (unread || 0) + R.length;
+    $$('.bell-count').forEach(b => { b.textContent = n > 99 ? '99+' : n; b.hidden = !n; });
+    const pc = $('#pendingCount'); if (pc) { pc.textContent = S.pending; pc.hidden = !S.pending; }
+  } catch (e) { console.warn('alerts', e); }
+}
+async function openBell() {
+  const notes = await q(sb.from('notifications').select('*').order('created_at', { ascending: false }).limit(40)).catch(() => []);
+  const R = S.alerts.reminders;
+  const icon = k => ({ approval: 'check', count: 'count', late: 'clock', kit: 'kit', cert: 'cert', low: 'box', faulty: 'box', missing: 'truck', decision: 'check', signup: 'users' }[k] || 'bell');
+  const li = (n, unread) => `<li class="${unread ? 'unread' : ''}"><a href="${esc(n.link || '#/dashboard')}" data-close><span class="ni ni-${esc(n.kind || 'x')}">${ico(icon(n.kind))}</span>
+    <span><b>${esc(n.title)}</b>${n.body ? `<span class="sub">${esc(n.body)}</span>` : ''}${n.created_at ? `<span class="sub">${fdt(n.created_at)}</span>` : ''}</span></a></li>`;
+  const d = document.createElement('div'); d.className = 'bellpanel'; d.setAttribute('role', 'dialog'); d.setAttribute('aria-label', 'Notifications');
+  d.innerHTML = `<div class="bp-head"><b>Notifications</b><button class="btn small" data-close>Close</button></div>
+    ${R.length ? `<div class="bp-sec">Needs attention</div><ul>${R.map(r => li(r, true)).join('')}</ul>` : ''}
+    <div class="bp-sec">Recent</div>
+    ${notes.length ? `<ul>${notes.map(n => li(n, !n.read_at)).join('')}</ul>` : '<div class="empty">No notifications yet.</div>'}`;
+  const scrim = document.createElement('div'); scrim.className = 'scrim';
+  const close = () => { d.remove(); scrim.remove(); };
+  scrim.onclick = close; d.addEventListener('click', e => { if (e.target.closest('[data-close]')) close(); });
+  document.addEventListener('keydown', function k(e) { if (e.key === 'Escape') { close(); document.removeEventListener('keydown', k); } });
+  document.body.append(scrim, d);
+  if (notes.some(n => !n.read_at)) { await sb.rpc('mark_notifications_read', { p_ids: null }); refreshAlerts(); }
+}
+
+// ---------------------------------------------------------------- realtime
+function subscribe() {
+  if (S.channel) return;
+  const onChange = debounce(() => {
+    invalidate(); refreshAlerts();
+    if (!document.querySelector('dialog[open]') && !S.inv.edit && document.visibilityState === 'visible' && !location.hash.startsWith('#/count')) render({ quiet: true });
+  }, 900);
+  try {
+    S.channel = sb.channel('nest-live');
+    ['stock', 'checkouts', 'movements', 'change_batches', 'items', 'counts', 'jobs'].forEach(t =>
+      S.channel.on('postgres_changes', { event: '*', schema: 'public', table: t }, onChange));
+    S.channel.on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'notifications' }, () => refreshAlerts());
+    S.channel.subscribe();
+  } catch (e) { console.warn('Live updates unavailable', e); }
+  setInterval(refreshAlerts, 5 * 60 * 1000);
+}
+
+// ---------------------------------------------------------------- version check
+async function checkVersion() {
+  try {
+    const r = await fetch('version.json?t=' + Date.now(), { cache: 'no-store' }); if (!r.ok) return;
+    const v = await r.json();
+    if (v.version && v.version !== CFG.VERSION && !$('#newver')) {
+      const b = document.createElement('div'); b.id = 'newver'; b.className = 'newver';
+      b.innerHTML = `A new version of ${esc(CFG.APP_NAME)} is available. <button class="btn small tagbtn">Reload</button>`;
+      $('button', b).onclick = () => location.reload(); document.body.appendChild(b);
+    }
+  } catch (e) { }
+}
+
+// ---------------------------------------------------------------- auth
+sb.auth.onAuthStateChange((event, session) => {
+  if (event === 'PASSWORD_RECOVERY') S.recovery = true;
+  const changed = (session?.user?.id || null) !== (S.session?.user?.id || null);
+  S.session = session;
+  if (event === 'SIGNED_OUT') { S.profile = null; invalidate(); S.shellReady = false; if (S.channel) { sb.removeChannel(S.channel); S.channel = null; } }
+  if (event === 'INITIAL_SESSION' || changed || event === 'PASSWORD_RECOVERY' || event === 'SIGNED_OUT') whenReady(boot);
+});
+
+function whenReady(fn) { if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', () => setTimeout(fn, 0), { once: true }); else setTimeout(fn, 0); }
+async function boot() {
+  if (S.recovery) return renderReset();
+  if (!S.session) return renderAuth('signin');
+  try {
+    S.profile = await q(sb.from('profiles').select('*').eq('id', S.session.user.id).maybeSingle());
+  } catch (e) { return renderAuth('signin', niceError(e)); }
+  if (!isActive()) return renderPending();
+  try { await loadLookups(); } catch (e) { return renderAuth('signin', niceError(e)); }
+  if (!isSuper() && !S.depts.some(d => +S.line === d.id)) setLine('');
+  if (!S.line && !isSuper() && !isAdmin()) { const m = myLineIds(); if (m.length === 1) setLine(m[0]); }
+  refreshAlerts(); subscribe(); checkVersion();
+  S.shellReady = false;
+  render();
+}
+
+function authShell(inner) {
+  $('#app').innerHTML = `<div class="auth">
+    <div class="auth-art">
+      <img class="eagle" src="brand/mark.png" alt="">
+      <div class="lockup">${wordmark()}<div class="sublock">NEST</div>
+        <div class="motto">${esc(CFG.TAGLINE || '')}</div></div>
+      <div class="foot"><span>${esc(CFG.COMPANY || '')}</span><span>${esc(CFG.MOTTO || '')}</span></div></div>
+    <div class="auth-form">${inner}</div></div>`;
+}
+
+function renderAuth(mode = 'signin', message = '', ok = false) {
+  S.shellReady = false;
+  const note = message ? `<div class="notice ${ok ? 'ok' : 'bad'}">${esc(message)}</div>` : '';
+  if (mode === 'signin') authShell(`<form id="f">
+      <h1>Sign in</h1><p class="sub">Use the email and password you registered with.</p>${note}
+      <label class="f">Email<input type="email" name="email" autocomplete="email" required></label>
+      <label class="f">Password<input type="password" name="password" autocomplete="current-password" required></label>
+      <button class="btn primary" type="submit">Sign in</button>
+      <div class="alt"><a href="#" data-m="signup">Create an account</a><a href="#" data-m="forgot">Forgot password?</a></div></form>`);
+  if (mode === 'signup') authShell(`<form id="f">
+      <h1>Create an account</h1><p class="sub">An admin approves new accounts and assigns your service line.</p>${note}
+      <label class="f">Full name<input type="text" name="name" autocomplete="name" required></label>
+      <label class="f">Email<input type="email" name="email" autocomplete="email" required></label>
+      <label class="f">Password<span class="hint">At least 8 characters.</span><input type="password" name="password" autocomplete="new-password" minlength="8" required></label>
+      <button class="btn primary" type="submit">Create account</button>
+      <div class="alt"><a href="#" data-m="signin">I already have an account</a></div></form>`);
+  if (mode === 'forgot') authShell(`<form id="f">
+      <h1>Reset password</h1><p class="sub">We’ll email you a link to set a new password.</p>${note}
+      <label class="f">Email<input type="email" name="email" autocomplete="email" required></label>
+      <button class="btn primary" type="submit">Send reset link</button>
+      <div class="alt"><a href="#" data-m="signin">Back to sign in</a></div></form>`);
+  $$('[data-m]').forEach(a => a.onclick = e => { e.preventDefault(); renderAuth(a.dataset.m); });
+  const f = $('#f');
+  f.onsubmit = async e => {
+    e.preventDefault();
+    const d = Object.fromEntries(new FormData(f)); const b = $('button[type=submit]', f); b.disabled = true;
+    try {
+      if (mode === 'signin') {
+        const { error } = await sb.auth.signInWithPassword({ email: d.email.trim(), password: d.password });
+        if (error) throw new Error(/invalid login/i.test(error.message) ? 'Wrong email or password.' : /not confirmed/i.test(error.message) ? 'Confirm your email first: open the link we sent you.' : error.message);
+      } else if (mode === 'signup') {
+        if (d.password.length < 8) throw new Error('Use at least 8 characters for the password.');
+        const { data, error } = await sb.auth.signUp({ email: d.email.trim(), password: d.password,
+          options: { data: { full_name: d.name.trim() }, emailRedirectTo: location.origin + location.pathname } });
+        if (error) throw error;
+        if (!data.session) return renderAuth('signin', 'Account created. Check your email for a confirmation link, then sign in.', true);
+      } else {
+        const { error } = await sb.auth.resetPasswordForEmail(d.email.trim(), { redirectTo: location.origin + location.pathname });
+        if (error) throw error;
+        return renderAuth('signin', 'If that email has an account, a reset link is on its way.', true);
+      }
+    } catch (ex) { b.disabled = false; renderAuth(mode, niceError(ex)); }
+  };
+}
+
+function renderReset() {
+  authShell(`<form id="f"><h1>Set a new password</h1><p class="sub">Choose a password you haven’t used here before.</p>
+    <label class="f">New password<input type="password" name="password" minlength="8" autocomplete="new-password" required></label>
+    <button class="btn primary" type="submit">Save password</button></form>`);
+  $('#f').onsubmit = async e => {
+    e.preventDefault(); const p = new FormData(e.target).get('password');
+    if (p.length < 8) return toast('Use at least 8 characters.', true);
+    const { error } = await sb.auth.updateUser({ password: p });
+    if (error) return toast(niceError(error), true);
+    S.recovery = false; history.replaceState(null, '', location.pathname + '#/'); toast('Password saved'); boot();
+  };
+}
+
+function renderPending() {
+  const disabled = S.profile?.role === 'disabled';
+  authShell(`<div class="card">
+    <h1>${disabled ? 'Access removed' : 'Waiting for approval'}</h1>
+    <p class="sub">${disabled ? 'An admin has turned off access for this account. Contact your admin if this is a mistake.'
+      : 'Your account is set up. An admin needs to approve it and assign your service line before you can see the inventory.'}</p>
+    <p class="muted">Signed in as ${esc(S.session.user.email)}</p>
+    <div class="actionrow"><button class="btn primary" id="again">Check again</button><button class="btn" id="out">Sign out</button></div></div>`);
+  $('#again').onclick = boot; $('#out').onclick = () => sb.auth.signOut();
+}
+
+// ---------------------------------------------------------------- shell
+function navItems() {
+  const main = [['dashboard', 'Overview', 'home'], ['inventory', 'Inventory', 'box'], ['scan', 'Scan', 'scan'],
+    ['jobs', 'Job tickets', 'truck'], ['checkouts', 'Out on jobs', 'out'], ['count', 'Monthly count', 'count'],
+    ['certs', 'Certificates & kits', 'cert'], ['reports', 'Reports', 'chart'], ['activity', 'Activity', 'clock'],
+    ['approvals', isAdmin() ? 'Approvals' : 'My requests', 'check']];
+  const setup = isAdmin() ? [['locations', 'Locations', 'pin'], ['team', 'Team', 'users'], ['labels', 'Labels', 'label'], ['audit', 'Audit log', 'audit'],
+    ...(isSuper() ? [['settings', 'Settings', 'gear']] : [])] : [];
+  return { main, setup };
+}
+
+function shell() {
+  if (S.shellReady) return;
+  const p = S.profile; const { main, setup } = navItems();
+  const link = ([r, l, i]) => `<a href="#/${r}" data-r="${r}">${ico(i)}${l}${r === 'approvals' && isAdmin() ? `<span class="count" id="pendingCount" ${S.pending ? '' : 'hidden'}>${S.pending}</span>` : ''}</a>`;
+  $('#app').innerHTML = `<div class="shell">
+    <aside class="side">
+      <a class="brand" href="#/"><img src="brand/mark-96.png" alt="">
+        <span class="brand-name">${wordmark()}<small>Nest · Inventory</small></span></a>
+      <a class="apps-link" href="#/">${ico('grid')}All apps</a>
+      <nav class="nav">${main.map(link).join('')}
+        ${setup.length ? `<div class="nav-group">Setup</div>${setup.map(link).join('')}` : ''}</nav>
+      <div class="side-foot">${CFG.MOTTO ? `<div class="motto">${esc(CFG.MOTTO)}</div>` : ''}
+        <a class="who" href="#/account">${esc(p.full_name || p.email)}</a><div class="role">${ROLE_LABEL[p.role]}${!isSuper() ? ' · ' + esc(myLineIds().map(lineShort).join(', ') || 'no service line') : ''}</div>
+        <a href="#" id="signout">Sign out</a></div>
+    </aside>
+    <main id="main"></main>
+    <button class="bell" id="bell" aria-label="Notifications">${ico('bell')}<span class="bell-count" hidden></span></button>
+    <nav class="bottombar">
+      <a href="#/dashboard" data-r="dashboard">${ico('home')}Overview</a>
+      <a href="#/inventory" data-r="inventory">${ico('box')}Inventory</a>
+      <a href="#/scan" data-r="scan" class="scan"><span class="disc">${ico('scan')}</span>Scan</a>
+      <a href="#/jobs" data-r="jobs">${ico('truck')}Jobs</a>
+      <a href="#/more" data-r="more">${ico('more')}More</a>
+    </nav></div>`;
+  $('#signout').onclick = e => { e.preventDefault(); sb.auth.signOut(); };
+  $('#bell').onclick = openBell;
+  S.shellReady = true; refreshAlerts();
+}
+function setNav(r) { $$('[data-r]').forEach(a => a.classList.toggle('on', a.dataset.r === r)); }
+
+const ROUTES = {};
+let renderSeq = 0;
+async function render(opts = {}) {
+  if (!S.session || !isActive()) return;
+  if (typeof stopScanner === 'function') stopScanner();
+  const { parts, params } = parseHash();
+  const r = parts[0] || '';
+  if (r === '' || r === 'home') { S.shellReady = false; return renderLauncher(); }
+  if (S.inv.edit && r !== 'inventory') { S.inv.edit = false; S.inv.changes.clear(); }
+  shell();
+  const view = ROUTES[r] || ROUTES.dashboard;
+  setNav(r === 'item' ? 'inventory' : r === 'job' ? 'jobs' : r);
+  const main = $('#main'); const seq = ++renderSeq;
+  const y = window.scrollY;
+  if (!opts.quiet) main.innerHTML = '<div class="loading">Loading…</div>';
+  try {
+    const html = await view.load(parts, params);
+    if (seq !== renderSeq) return;
+    main.innerHTML = html + `<div class="pagefoot">${esc(CFG.APP_NAME)} · ${esc(CFG.MOTTO || '')} · v${esc(CFG.VERSION || '')}</div>`;
+    view.bind && view.bind(main, parts, params);
+    if (opts.quiet) window.scrollTo(0, y); else window.scrollTo(0, 0);
+  } catch (e) {
+    console.error(e);
+    if (seq === renderSeq) main.innerHTML = `<div class="notice bad">${esc(niceError(e))}</div><button class="btn" onclick="location.reload()">Reload</button>`;
+  }
+}
+window.addEventListener('hashchange', () => render());
+const refresh = () => { invalidate(); refreshAlerts(); render({ quiet: true }); };
+
+function topbar(title, sub = '', actions = '') {
+  return `<div class="topbar"><div><h1>${title}</h1>${sub ? `<div class="sub">${sub}</div>` : ''}</div>${actions ? `<div class="actions">${actions}</div>` : ''}</div>`;
+}
+// service-line switcher
+function lineChips(id = 'lines', all = true) {
+  return `<div class="linechips" id="${id}" role="tablist">${all ? `<button type="button" data-l="" class="${!S.line ? 'on' : ''}">All lines</button>` : ''}
+    ${S.depts.map(d => `<button type="button" data-l="${d.id}" class="${+S.line === d.id ? 'on' : ''}">${esc(d.short_name || d.name)}${!isSuper() && inLine(d.id) ? '<i class="mine" title="Your service line"></i>' : ''}</button>`).join('')}</div>`;
+}
+function bindLineChips(main, cb, id = 'lines') {
+  $$(`#${id} button`, main).forEach(b => b.onclick = () => { setLine(b.dataset.l); cb ? cb() : render({ quiet: true }); });
+}
+
+// ---------------------------------------------------------------- launcher (Nest home)
+async function renderLauncher() {
+  const p = S.profile; const first = (p.full_name || '').split(' ')[0];
+  const apps = p.apps || ['inventory'];
+  $('#app').innerHTML = `<div class="launcher">
+    <header class="l-top"><a class="brand" href="#/"><img src="brand/mark-96.png" alt=""><span class="brand-name">${wordmark()}<small>Nest</small></span></a>
+      <div class="l-right"><button class="bell inline" id="bell" aria-label="Notifications">${ico('bell')}<span class="bell-count" hidden></span></button>
+      <a class="btn small ghost" href="#/account">${esc(p.full_name || p.email)}</a><button class="btn small ghost" id="out">Sign out</button></div></header>
+    <section class="l-hero"><img class="l-mark" src="brand/mark.png" alt="">
+      <div><div class="l-tag">${esc(CFG.TAGLINE || '')}</div><h1>${first ? `Welcome back, ${esc(first)}` : 'Welcome'}</h1>
+      <p>Where would you like to go?</p></div></section>
+    <section class="tiles">
+      ${apps.includes('inventory') ? `<a class="tile live" href="#/dashboard"><span class="t-ico">${ico('box')}</span><span class="t-name">Inventory</span>
+        <span class="t-desc">Equipment, stock, job tickets, monthly counts and reports across all four service lines.</span>
+        <span class="t-meta" id="invMeta">Open</span></a>` : ''}
+      <div class="tile soon"><span class="t-ico">${ico('chart')}</span><span class="t-name">Sales &amp; Finance</span>
+        <span class="t-desc">Purchase orders, field tickets and proforma invoices.</span><span class="t-meta">Coming later</span></div>
+      ${isAdmin() ? `<a class="tile admin" href="#/team"><span class="t-ico">${ico('users')}</span><span class="t-name">Team &amp; access</span>
+        <span class="t-desc">Approve people, set roles and service lines.</span><span class="t-meta">Manage</span></a>` : ''}
+    </section>
+    <footer class="l-foot">${esc(CFG.COMPANY || '')} · ${esc(CFG.MOTTO || '')} · v${esc(CFG.VERSION || '')}</footer></div>`;
+  $('#out').onclick = () => sb.auth.signOut(); $('#bell').onclick = openBell;
+  await refreshAlerts();
+  const m = $('#invMeta'); if (m) { const n = S.alerts.reminders.length; m.textContent = n ? `${plural(n, 'thing')} ${n === 1 ? 'needs' : 'need'} attention` : 'All up to date'; if (n) m.classList.add('hot'); }
+}
+
+// Handheld (keyboard-wedge) scanners: fast keystrokes ending in Enter, outside any text field
+(() => {
+  let buf = '', last = 0;
+  document.addEventListener('keydown', e => {
+    const t = e.target; if (!S.shellReady || t.closest('input,textarea,select,dialog')) return;
+    const now = Date.now(); if (now - last > 60) buf = ''; last = now;
+    if (e.key === 'Enter') { if (buf.length >= 4 && typeof openScanned === 'function') { e.preventDefault(); openScanned(buf); } buf = ''; return; }
+    if (e.key.length === 1) buf += e.key;
+  });
+})();
