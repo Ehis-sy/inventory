@@ -37,7 +37,7 @@ async function brandXlsx({ file, sheets, instructions }) {
   for (const sh of sheets) {
     const ws = wb.addWorksheet(safeSheet(sh.name), { views: [{ showGridLines: false }],
       pageSetup: { orientation: 'landscape', fitToPage: true, fitToWidth: 1, fitToHeight: 0, paperSize: 9, margins: { left: .4, right: .4, top: .5, bottom: .6, header: .2, footer: .3 } },
-      headerFooter: { oddFooter: `&L&8${CFG.MOTTO || ''}&C&8${CFG.APP_NAME} · ${sh.title || sh.name}&R&8Page &P of &N` } });
+      headerFooter: { oddFooter: `&L&8${CFG.COMPANY || ''} · ${CFG.MOTTO || ''}&C&8${sh.title || sh.name}&R&8Page &P of &N` } });
     if (sh.instructions) {
       ws.getColumn(1).width = 4; ws.getColumn(2).width = 110;
       ws.addImage(logoId, { tl: { col: 1, row: 0.3 }, ext: { width: 190, height: 190 * logo.h / logo.w } });
@@ -147,7 +147,7 @@ async function brandXlsx({ file, sheets, instructions }) {
     if (sh.rows.length && !sh.group) ws.autoFilter = { from: { row: headRow, column: 1 }, to: { row: r - 1, column: n } };
     ws.pageSetup.printTitlesRow = `${headRow}:${headRow}`;
     if (sh.hideFirst) ws.getColumn(1).hidden = true;
-    r += 1; ws.getCell(r, 1).value = `${CFG.COMPANY || ''} · ${CFG.APP_NAME} · ${CFG.MOTTO || ''}`;
+    r += 1; ws.getCell(r, 1).value = `${CFG.COMPANY || ''} · ${CFG.MOTTO || ''}`;
     ws.getCell(r, 1).font = { size: 9, italic: true, color: { argb: 'FF' + BRAND.grey } };
     sh._firstData = firstData;
   }
@@ -225,7 +225,7 @@ async function pdfFrame(doc, { title, subtitle }) {
     const wA = doc.getTextWidth(ORG.slice(0, 3));
     doc.setTextColor(235, 235, 235); doc.text(ORG.slice(3), 13 + mw + wA, 13);
     doc.setFont('Barlow', 'bold'); doc.setFontSize(6.6); doc.setTextColor(170, 172, 176);
-    doc.text('ENERGY SERVICES LTD', 13 + mw, 18, { charSpace: 1.1 });
+    doc.text('ENERGY SERVICES LIMITED', 13 + mw, 18, { charSpace: 1.1 });
     doc.setFont('Montserrat', 'bold'); doc.setFontSize(12.5); doc.setTextColor(255, 255, 255);
     doc.text(pdfText(title), W - 10, 11.5, { align: 'right' });
     doc.setFont('Barlow', 'normal'); doc.setFontSize(9); doc.setTextColor(185, 188, 193);

@@ -1,4 +1,30 @@
-# GANKCO Nest: upgrade to version 2.0
+# GANKCO Nest: version 2.1 update
+
+*Built to support engineered solutions.*
+
+## Install 2.1 (about 5 minutes)
+
+1. **Supabase → SQL Editor → New query:** paste all of **`3-nest-v2.1-upgrade.sql`** and press **Run**. Wait for **Success**. It's safe to run again.
+2. **GitHub:** unzip **`gankco-nest-v2.1.zip`** and upload everything from the folder into your `inventory` repository (**Add file → Upload files**), then commit. Keep the `CNAME` file.
+3. After 1–2 minutes, anyone with Nest open sees **"A new version is available: Reload"**.
+
+## What's new in 2.1
+
+- **Materials requests** replace job tickets and are numbered **MR-2026-0001** onward. Existing tickets are renumbered.
+  - **Requester** is chosen from a list of active users and starts on the person creating the request.
+  - **Each service line's admin approves and issues their own items.** A request can be **Partly issued** while another line is still deciding. A rejected line shows the reason, and the other lines can still go.
+  - When an admin raises a request, items from their own line(s) are issued as soon as they submit.
+  - **Add to materials request**: tick items on the Inventory page to start or add to a draft request.
+  - **The requester is notified** when their items are issued or rejected, or when a request is overdue for return.
+  - The **Load-out Manifest** has a Requester box and an **Issued by** box for each service line.
+- **View as** (Super Admin): pick a role and service line(s) to see Nest exactly as they do. It's read-only, with an orange bar and an **Exit** button.
+- **Nest home tiles:** Inventory, Purchase Orders (coming later), Proforma Invoices & Quotes (coming later), and Team & access (admins).
+- **Sign-ups:** only **@gankcoenergy.com** addresses can create an account. On the **Team** page, accounts on other addresses (including yours, if it's personal) show **Fix email**. It gives you a short piece of code to run in Supabase that moves the account to its company email, keeping its password and history.
+- **Wording:** "GANKCO Nest · Built to support engineered solutions" inside Nest, and "GANKCO Energy Services Limited · Providing engineered solutions" wherever the company is named.
+
+---
+
+# Earlier: upgrade to version 2.0
 
 *Built to support engineered solutions.*
 
@@ -51,7 +77,7 @@ Open **Inventory → Team**.
 
 | Task | Where |
 |---|---|
-| Send equipment to a job | **Job tickets → New job ticket**. Add items, **Dispatch**, print the **load-out manifest**, then **Record return** when it comes back (good, damaged, used, sold or missing). |
+| Send equipment to a job | **Materials requests → New materials request**. Add items, **Submit**. Each line's admin presses **Approve & issue**. Print the **Load-out Manifest**, then **Record return** when items come back (good, damaged, used, sold or missing). |
 | Correct many numbers at once | **Inventory → Edit quantities**. Type the new numbers, then **Review & submit**. Staff changes go to their line's admin as one request. |
 | Monthly count (23rd–26th) | **Monthly count**: start your line's count, tick ✓ or type the real number, then **Submit**. The admin approves, and the month is locked and signed. |
 | Approvals | **Approvals**: approve one request, ticked requests, or **Approve all** for a line. Single lines inside a request can be approved or rejected too. |

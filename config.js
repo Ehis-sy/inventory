@@ -6,8 +6,9 @@ window.APP_CONFIG = {
   SUPABASE_ANON_KEY: 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InB6cGp3Z2doeWtwYWVwaHZsbW5vIiwicm9sZSI6ImFub24iLCJpYXQiOjE3OTM2MjI0NjYsImV4cCI6MjEwOTE5ODQ2Nn0.52u26vtwob_KhIVH52yjAbiwKqxC68tr4hCTBWvXnAM',
   APP_NAME: 'GANKCO Nest',
   ORG_SHORT: 'GANKCO',
-  COMPANY: 'Gankco Energy Services Ltd',
+  COMPANY: 'GANKCO Energy Services Limited',
   TAGLINE: 'Built to support engineered solutions',
   MOTTO: 'Providing engineered solutions',
-  VERSION: '2.0'
+  VERSION: '2.1',
+  SIGNUP_DOMAIN: 'gankcoenergy.com'
 };

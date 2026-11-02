@@ -17,6 +17,7 @@ const S = {
   certs: { view: 'soon', tab: 'certs' },
   appr: { view: 'pending', sel: new Set() },
   shellReady: false, channel: null,
+  viewAs: (() => { try { return JSON.parse(sessionStorage.getItem('nest.viewAs') || 'null'); } catch (e) { return null; } })(),
 };
 
 // ---------------------------------------------------------------- helpers
@@ -45,11 +46,13 @@ const CERT_KINDS = { certification: 'Certification', calibration: 'Calibration',
 const ROLE_LABEL = { pending: 'Waiting for approval', staff: 'Staff', admin: 'Admin', superadmin: 'Super Admin', disabled: 'No access' };
 
 // roles & service lines
-const role = () => S.profile?.role;
+const realRole = () => S.profile?.role;
+const realSuper = () => realRole() === 'superadmin';
+const role = () => (S.viewAs && realSuper()) ? S.viewAs.role : realRole();
 const isSuper = () => role() === 'superadmin';
 const isAdmin = () => ['admin', 'superadmin'].includes(role());
 const isActive = () => ['staff', 'admin', 'superadmin'].includes(role());
-const myLineIds = () => isSuper() ? S.depts.map(d => d.id) : S.members.filter(m => m.profile_id === S.profile?.id).map(m => m.department_id);
+const myLineIds = () => isSuper() ? S.depts.map(d => d.id) : (S.viewAs && realSuper()) ? (S.viewAs.lines || []).map(Number) : S.members.filter(m => m.profile_id === S.profile?.id).map(m => m.department_id);
 const inLine = d => myLineIds().includes(+d);
 const canAct = d => isSuper() || role() === 'admin' || (role() === 'staff' && inLine(d));
 const canAdmin = d => isSuper() || (role() === 'admin' && inLine(d));
@@ -61,6 +64,29 @@ const realLocs = () => S.locs.filter(l => l.active && !l.is_placeholder);
 const personName = (id, fallback = '') => { const p = S.people[id]; return p ? (p.full_name || p.email) : fallback; };
 const setting = (k, d) => S.settings[k] ?? d;
 
+// "View as" is read-only: block every write while it's on
+const VIEW_MSG = 'You’re viewing Nest as another role, so changes are switched off. Press Exit on the orange bar to make changes.';
+(() => {
+  const READ_RPC = new Set(['month_totals', 'period_flows', 'mark_notifications_read']);
+  const blocked = () => { const p = new Proxy(function () { }, { get: (t, k) => k === 'then' ? (res => res({ data: null, error: { message: VIEW_MSG } })) : () => p, apply: () => p }); return p; };
+  const _rpc = sb.rpc.bind(sb), _from = sb.from.bind(sb);
+  sb.rpc = (fn, args, opts) => (S.viewAs && !READ_RPC.has(fn)) ? blocked() : _rpc(fn, args, opts);
+  sb.from = t => { const b = _from(t); if (S.viewAs) ['insert', 'update', 'delete', 'upsert'].forEach(m => { b[m] = () => blocked(); }); return b; };
+})();
+function setViewAs(v) { S.viewAs = v; try { v ? sessionStorage.setItem('nest.viewAs', JSON.stringify(v)) : sessionStorage.removeItem('nest.viewAs'); } catch (e) { } S.shellReady = false; S.inv.edit = false; S.inv.changes.clear(); refreshAlerts(); render(); }
+function viewAsBar() {
+  if (!(S.viewAs && realSuper())) return '';
+  return `<div class="viewas-bar">Viewing as <b>${esc(ROLE_LABEL[S.viewAs.role])}</b>${S.viewAs.role !== 'superadmin' ? ' · ' + esc((S.viewAs.lines || []).map(lineShort).join(', ') || 'no service line') : ''} · read only <button class="btn small" id="va-exit">Exit</button></div>`;
+}
+function bindViewAs() { const x = $('#va-exit'); if (x) x.onclick = () => setViewAs(null); }
+function openViewAs() {
+  return modal({
+    title: 'View Nest as…', sub: 'See exactly what a role sees: menu, what can be edited, approvals and reminders. Read only: nothing can be changed while viewing.', submit: 'Start viewing',
+    body: `<label class="f">Role<select name="role">${opt('staff', 'Staff')}${opt('admin', 'Admin')}</select></label>
+      <div class="f">Service line(s)${S.depts.map(d => `<label class="check"><input type="checkbox" name="l${d.id}"> ${esc(d.name)}</label>`).join('')}</div>`,
+    onSubmit: async x => { const lines = S.depts.filter(d => x['l' + d.id]).map(d => d.id); if (!lines.length) throw new Error('Tick at least one service line.'); setTimeout(() => setViewAs({ role: x.role, lines }), 0); }
+  });
+}
 function niceError(e) {
   const m = (e && (e.message || e.error_description || e.msg)) || String(e);
   if (/permission denied|row-level security/i.test(m)) return 'You don’t have permission to do that.';
@@ -196,18 +222,26 @@ async function refreshAlerts() {
   if (!isActive()) return;
   try {
     const mine = myLineIds(); const t = localISO(0);
-    const [{ count: unread }, appr, counts, kits, certs, overdue] = await Promise.all([
+    const [{ count: unreadReal }, appr, counts, kits, certs, overdue, mrs] = await Promise.all([
       sb.from('notifications').select('id', { count: 'exact', head: true }).is('read_at', null),
       isAdmin() ? q(sb.from('change_batches').select('id,department_id').eq('state', 'pending')) : [],
       q(sb.from('counts').select('department_id,state').eq('month', monthISO())),
       q(sb.from('kit_status').select('unit_id,department_id,expiry_on').lte('expiry_on', localISO(+setting('kit_warn_days', 60))).not('expiry_on', 'is', null)),
       q(sb.from('certifications').select('id,item_id,items(department_id)').eq('superseded', false).not('due_on', 'is', null).lte('due_on', localISO(+setting('cert_warn_days', 30)))),
       q(sb.from('checkouts').select('id,items(department_id)').is('closed_at', null).lt('due_back', t)),
+      q(sb.from('jobs').select('id,job_no,status,requester_id,expected_return,job_sections(department_id,state)').in('status', ['submitted', 'partial', 'out'])),
     ]);
+    const unread = S.viewAs ? 0 : unreadReal;
     const R = [];
     const myAppr = appr.filter(b => canAdmin(b.department_id));
     S.pending = myAppr.length;
     if (myAppr.length) R.push({ kind: 'approval', title: `${plural(myAppr.length, 'request')} waiting for your approval`, link: '#/approvals' });
+    const mrWait = isAdmin() ? mrs.filter(j => (j.job_sections || []).some(s => s.state === 'pending' && canAdmin(s.department_id))) : [];
+    S.pendingMR = mrWait.length;
+    if (mrWait.length) R.push({ kind: 'approval', title: `${plural(mrWait.length, 'materials request')} waiting for you to approve & issue`, link: mrWait.length === 1 ? '#/job/' + mrWait[0].id : '#/jobs?v=waiting' });
+    const meId = S.viewAs ? null : S.profile.id;
+    const mine2 = mrs.filter(j => j.requester_id === meId && ['out', 'partial'].includes(j.status) && j.expected_return && j.expected_return < t);
+    if (mine2.length) R.push({ kind: 'late', title: `${plural(mine2.length, 'of your materials requests', 'of your materials requests')} overdue for return`, link: mine2.length === 1 ? '#/job/' + mine2[0].id : '#/jobs?v=out' });
     const day = new Date().getDate(), open = +setting('count_open_day', 23), close = +setting('count_close_day', 26);
     const monthName = new Date().toLocaleDateString('en-GB', { month: 'long' });
     if (day >= open) {
@@ -236,20 +270,21 @@ async function refreshAlerts() {
 async function openBell() {
   const notes = await q(sb.from('notifications').select('*').order('created_at', { ascending: false }).limit(40)).catch(() => []);
   const R = S.alerts.reminders;
-  const icon = k => ({ approval: 'check', count: 'count', late: 'clock', kit: 'kit', cert: 'cert', low: 'box', faulty: 'box', missing: 'truck', decision: 'check', signup: 'users' }[k] || 'bell');
+  if (S.viewAs) notes.length = 0;
+  const icon = k => ({ issued: 'truck', approval: 'check', count: 'count', late: 'clock', kit: 'kit', cert: 'cert', low: 'box', faulty: 'box', missing: 'truck', decision: 'check', signup: 'users' }[k] || 'bell');
   const li = (n, unread) => `<li class="${unread ? 'unread' : ''}"><a href="${esc(n.link || '#/dashboard')}" data-close><span class="ni ni-${esc(n.kind || 'x')}">${ico(icon(n.kind))}</span>
     <span><b>${esc(n.title)}</b>${n.body ? `<span class="sub">${esc(n.body)}</span>` : ''}${n.created_at ? `<span class="sub">${fdt(n.created_at)}</span>` : ''}</span></a></li>`;
   const d = document.createElement('div'); d.className = 'bellpanel'; d.setAttribute('role', 'dialog'); d.setAttribute('aria-label', 'Notifications');
   d.innerHTML = `<div class="bp-head"><b>Notifications</b><button class="btn small" data-close>Close</button></div>
     ${R.length ? `<div class="bp-sec">Needs attention</div><ul>${R.map(r => li(r, true)).join('')}</ul>` : ''}
     <div class="bp-sec">Recent</div>
-    ${notes.length ? `<ul>${notes.map(n => li(n, !n.read_at)).join('')}</ul>` : '<div class="empty">No notifications yet.</div>'}`;
+    ${S.viewAs ? '<div class="empty">Personal notifications aren’t shown while viewing as a role.</div>' : notes.length ? `<ul>${notes.map(n => li(n, !n.read_at)).join('')}</ul>` : '<div class="empty">No notifications yet.</div>'}`;
   const scrim = document.createElement('div'); scrim.className = 'scrim';
   const close = () => { d.remove(); scrim.remove(); };
   scrim.onclick = close; d.addEventListener('click', e => { if (e.target.closest('[data-close]')) close(); });
   document.addEventListener('keydown', function k(e) { if (e.key === 'Escape') { close(); document.removeEventListener('keydown', k); } });
   document.body.append(scrim, d);
-  if (notes.some(n => !n.read_at)) { await sb.rpc('mark_notifications_read', { p_ids: null }); refreshAlerts(); }
+  if (!S.viewAs && notes.some(n => !n.read_at)) { await sb.rpc('mark_notifications_read', { p_ids: null }); refreshAlerts(); }
 }
 
 // ---------------------------------------------------------------- realtime
@@ -299,6 +334,7 @@ async function boot() {
     S.profile = await q(sb.from('profiles').select('*').eq('id', S.session.user.id).maybeSingle());
   } catch (e) { return renderAuth('signin', niceError(e)); }
   if (!isActive()) return renderPending();
+  if (S.viewAs && !realSuper()) setViewAs(null);
   try { await loadLookups(); } catch (e) { return renderAuth('signin', niceError(e)); }
   if (!isSuper() && !S.depts.some(d => +S.line === d.id)) setLine('');
   if (!S.line && !isSuper() && !isAdmin()) { const m = myLineIds(); if (m.length === 1) setLine(m[0]); }
@@ -313,7 +349,7 @@ function authShell(inner) {
       <img class="eagle" src="brand/mark.png" alt="">
       <div class="lockup">${wordmark()}<div class="sublock">NEST</div>
         <div class="motto">${esc(CFG.TAGLINE || '')}</div></div>
-      <div class="foot"><span>${esc(CFG.COMPANY || '')}</span><span>${esc(CFG.MOTTO || '')}</span></div></div>
+      <div class="foot"><span>${esc(CFG.COMPANY || '')} · ${esc(CFG.MOTTO || '')}</span></div></div>
     <div class="auth-form">${inner}</div></div>`;
 }
 
@@ -327,7 +363,7 @@ function renderAuth(mode = 'signin', message = '', ok = false) {
       <button class="btn primary" type="submit">Sign in</button>
       <div class="alt"><a href="#" data-m="signup">Create an account</a><a href="#" data-m="forgot">Forgot password?</a></div></form>`);
   if (mode === 'signup') authShell(`<form id="f">
-      <h1>Create an account</h1><p class="sub">An admin approves new accounts and assigns your service line.</p>${note}
+      <h1>Create an account</h1><p class="sub">Use your ${esc(CFG.SIGNUP_DOMAIN ? '@' + CFG.SIGNUP_DOMAIN : 'company')} email. An admin approves new accounts and assigns your service line.</p>${note}
       <label class="f">Full name<input type="text" name="name" autocomplete="name" required></label>
       <label class="f">Email<input type="email" name="email" autocomplete="email" required></label>
       <label class="f">Password<span class="hint">At least 8 characters.</span><input type="password" name="password" autocomplete="new-password" minlength="8" required></label>
@@ -348,10 +384,11 @@ function renderAuth(mode = 'signin', message = '', ok = false) {
         const { error } = await sb.auth.signInWithPassword({ email: d.email.trim(), password: d.password });
         if (error) throw new Error(/invalid login/i.test(error.message) ? 'Wrong email or password.' : /not confirmed/i.test(error.message) ? 'Confirm your email first: open the link we sent you.' : error.message);
       } else if (mode === 'signup') {
+        if (CFG.SIGNUP_DOMAIN && !d.email.trim().toLowerCase().endsWith('@' + CFG.SIGNUP_DOMAIN.toLowerCase())) throw new Error(`Only GANKCO email addresses (@${CFG.SIGNUP_DOMAIN}) can create an account.`);
         if (d.password.length < 8) throw new Error('Use at least 8 characters for the password.');
         const { data, error } = await sb.auth.signUp({ email: d.email.trim(), password: d.password,
           options: { data: { full_name: d.name.trim() }, emailRedirectTo: location.origin + location.pathname } });
-        if (error) throw error;
+        if (error) throw new Error(/database error|only gankco/i.test(error.message) ? `Only GANKCO email addresses (@${CFG.SIGNUP_DOMAIN || 'gankcoenergy.com'}) can create an account.` : error.message);
         if (!data.session) return renderAuth('signin', 'Account created. Check your email for a confirmation link, then sign in.', true);
       } else {
         const { error } = await sb.auth.resetPasswordForEmail(d.email.trim(), { redirectTo: location.origin + location.pathname });
@@ -389,7 +426,7 @@ function renderPending() {
 // ---------------------------------------------------------------- shell
 function navItems() {
   const main = [['dashboard', 'Overview', 'home'], ['inventory', 'Inventory', 'box'], ['scan', 'Scan', 'scan'],
-    ['jobs', 'Job tickets', 'truck'], ['checkouts', 'Out on jobs', 'out'], ['count', 'Monthly count', 'count'],
+    ['jobs', 'Materials requests', 'truck'], ['checkouts', 'Out on jobs', 'out'], ['count', 'Monthly count', 'count'],
     ['certs', 'Certificates & kits', 'cert'], ['reports', 'Reports', 'chart'], ['activity', 'Activity', 'clock'],
     ['approvals', isAdmin() ? 'Approvals' : 'My requests', 'check']];
   const setup = isAdmin() ? [['locations', 'Locations', 'pin'], ['team', 'Team', 'users'], ['labels', 'Labels', 'label'], ['audit', 'Audit log', 'audit'],
@@ -408,21 +445,24 @@ function shell() {
       <a class="apps-link" href="#/">${ico('grid')}All apps</a>
       <nav class="nav">${main.map(link).join('')}
         ${setup.length ? `<div class="nav-group">Setup</div>${setup.map(link).join('')}` : ''}</nav>
-      <div class="side-foot">${CFG.MOTTO ? `<div class="motto">${esc(CFG.MOTTO)}</div>` : ''}
-        <a class="who" href="#/account">${esc(p.full_name || p.email)}</a><div class="role">${ROLE_LABEL[p.role]}${!isSuper() ? ' · ' + esc(myLineIds().map(lineShort).join(', ') || 'no service line') : ''}</div>
+      <div class="side-foot">${CFG.TAGLINE ? `<div class="motto">${esc(CFG.TAGLINE)}</div>` : ''}
+        <a class="who" href="#/account">${esc(p.full_name || p.email)}</a><div class="role">${ROLE_LABEL[role()]}${!isSuper() ? ' · ' + esc(myLineIds().map(lineShort).join(', ') || 'no service line') : ''}</div>
+        ${realSuper() ? `<button class="btn small viewas-btn" id="viewas">${S.viewAs ? 'Change view' : 'View as…'}</button>` : ''}
         <a href="#" id="signout">Sign out</a></div>
-    </aside>
+    </aside>${viewAsBar()}
     <main id="main"></main>
     <button class="bell" id="bell" aria-label="Notifications">${ico('bell')}<span class="bell-count" hidden></span></button>
     <nav class="bottombar">
       <a href="#/dashboard" data-r="dashboard">${ico('home')}Overview</a>
       <a href="#/inventory" data-r="inventory">${ico('box')}Inventory</a>
       <a href="#/scan" data-r="scan" class="scan"><span class="disc">${ico('scan')}</span>Scan</a>
-      <a href="#/jobs" data-r="jobs">${ico('truck')}Jobs</a>
+      <a href="#/jobs" data-r="jobs">${ico('truck')}Requests</a>
       <a href="#/more" data-r="more">${ico('more')}More</a>
     </nav></div>`;
   $('#signout').onclick = e => { e.preventDefault(); sb.auth.signOut(); };
   $('#bell').onclick = openBell;
+  const va = $('#viewas'); if (va) va.onclick = openViewAs; bindViewAs();
+  document.body.classList.toggle('viewing-as', !!(S.viewAs && realSuper()));
   S.shellReady = true; refreshAlerts();
 }
 function setNav(r) { $$('[data-r]').forEach(a => a.classList.toggle('on', a.dataset.r === r)); }
@@ -445,7 +485,7 @@ async function render(opts = {}) {
   try {
     const html = await view.load(parts, params);
     if (seq !== renderSeq) return;
-    main.innerHTML = html + `<div class="pagefoot">${esc(CFG.APP_NAME)} · ${esc(CFG.MOTTO || '')} · v${esc(CFG.VERSION || '')}</div>`;
+    main.innerHTML = html + `<div class="pagefoot">${esc(CFG.APP_NAME)} · ${esc(CFG.TAGLINE || '')} · v${esc(CFG.VERSION || '')}</div>`;
     view.bind && view.bind(main, parts, params);
     if (opts.quiet) window.scrollTo(0, y); else window.scrollTo(0, 0);
   } catch (e) {
@@ -470,26 +510,30 @@ function bindLineChips(main, cb, id = 'lines') {
 
 // ---------------------------------------------------------------- launcher (Nest home)
 async function renderLauncher() {
-  const p = S.profile; const first = (p.full_name || '').split(' ')[0];
+  const p = S.profile; const first = S.viewAs ? '' : (p.full_name || '').split(' ')[0];
   const apps = p.apps || ['inventory'];
-  $('#app').innerHTML = `<div class="launcher">
+  $('#app').innerHTML = `${viewAsBar()}<div class="launcher">
     <header class="l-top"><a class="brand" href="#/"><img src="brand/mark-96.png" alt=""><span class="brand-name">${wordmark()}<small>Nest</small></span></a>
-      <div class="l-right"><button class="bell inline" id="bell" aria-label="Notifications">${ico('bell')}<span class="bell-count" hidden></span></button>
+      <div class="l-right">${realSuper() ? `<button class="btn small ghost" id="viewas">${S.viewAs ? 'Change view' : 'View as…'}</button>` : ''}<button class="bell inline" id="bell" aria-label="Notifications">${ico('bell')}<span class="bell-count" hidden></span></button>
       <a class="btn small ghost" href="#/account">${esc(p.full_name || p.email)}</a><button class="btn small ghost" id="out">Sign out</button></div></header>
     <section class="l-hero"><img class="l-mark" src="brand/mark.png" alt="">
       <div><div class="l-tag">${esc(CFG.TAGLINE || '')}</div><h1>${first ? `Welcome back, ${esc(first)}` : 'Welcome'}</h1>
       <p>Where would you like to go?</p></div></section>
     <section class="tiles">
       ${apps.includes('inventory') ? `<a class="tile live" href="#/dashboard"><span class="t-ico">${ico('box')}</span><span class="t-name">Inventory</span>
-        <span class="t-desc">Equipment, stock, job tickets, monthly counts and reports across all four service lines.</span>
+        <span class="t-desc">Equipment, stock, materials requests, monthly counts and reports.</span>
         <span class="t-meta" id="invMeta">Open</span></a>` : ''}
-      <div class="tile soon"><span class="t-ico">${ico('chart')}</span><span class="t-name">Sales &amp; Finance</span>
-        <span class="t-desc">Purchase orders, field tickets and proforma invoices.</span><span class="t-meta">Coming later</span></div>
+      <div class="tile soon"><span class="t-ico">${ico('audit')}</span><span class="t-name">Purchase Orders</span>
+        <span class="t-desc">Raise and track purchase orders to OEMs and suppliers.</span><span class="t-meta">Coming later</span></div>
+      <div class="tile soon"><span class="t-ico">${ico('chart')}</span><span class="t-name">Proforma Invoices &amp; Quotes</span>
+        <span class="t-desc">Prepare quotes and proforma invoices for clients.</span><span class="t-meta">Coming later</span></div>
       ${isAdmin() ? `<a class="tile admin" href="#/team"><span class="t-ico">${ico('users')}</span><span class="t-name">Team &amp; access</span>
         <span class="t-desc">Approve people, set roles and service lines.</span><span class="t-meta">Manage</span></a>` : ''}
     </section>
-    <footer class="l-foot">${esc(CFG.COMPANY || '')} · ${esc(CFG.MOTTO || '')} · v${esc(CFG.VERSION || '')}</footer></div>`;
+    <footer class="l-foot">${esc(CFG.COMPANY || '')} · ${esc(CFG.MOTTO || '')}<br><span>${esc(CFG.APP_NAME)} v${esc(CFG.VERSION || '')}</span></footer></div>`;
   $('#out').onclick = () => sb.auth.signOut(); $('#bell').onclick = openBell;
+  const va = $('#viewas'); if (va) va.onclick = openViewAs; bindViewAs();
+  document.body.classList.toggle('viewing-as', !!(S.viewAs && realSuper()));
   await refreshAlerts();
   const m = $('#invMeta'); if (m) { const n = S.alerts.reminders.length; m.textContent = n ? `${plural(n, 'thing')} ${n === 1 ? 'needs' : 'need'} attention` : 'All up to date'; if (n) m.classList.add('hot'); }
 }

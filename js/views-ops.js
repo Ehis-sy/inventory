@@ -1,34 +1,44 @@
-/* GANKCO Nest — Operations: job tickets, out on jobs, monthly count, approvals, certificates & kits, activity */
+/* GANKCO Nest — Operations: materials requests, out on jobs, monthly count, approvals, certificates & kits, activity */
 'use strict';
 
 const zq = n => +n ? fq(n) : '·';
-const JOB_STATUS = { draft: ['muted', 'Draft'], out: ['out', 'Out on job'], closed: ['ok', 'Closed'], cancelled: ['muted', 'Cancelled'] };
+const JOB_STATUS = { draft: ['muted', 'Draft'], submitted: ['pending', 'Waiting for approval'], partial: ['soon', 'Partly issued'], out: ['out', 'Issued · out on job'],
+  closed: ['ok', 'Closed'], cancelled: ['muted', 'Cancelled'], rejected: ['rejected', 'Rejected'] };
+const SEC_STATUS = { pending: ['pending', 'Waiting for approval'], issued: ['ok', 'Issued'], rejected: ['rejected', 'Rejected'] };
+const activePeople = () => Object.values(S.people).filter(p => ['staff', 'admin', 'superadmin'].includes(p.role)).sort((a, b) => (a.full_name || a.email).localeCompare(b.full_name || b.email));
 
-// ================================================================ JOB TICKETS
+// ================================================================ MATERIALS REQUESTS
 ROUTES.jobs = {
   async load(parts, params) {
-    this.view = params.get('v') || this.view || 'open';
-    const jobs = await q(sb.from('jobs').select('*, job_lines(id,qty,items(department_id))').order('created_at', { ascending: false }).limit(300));
+    if (params.get('v')) { this.view = params.get('v'); history.replaceState(null, '', '#/jobs'); }
+    this.view = this.view || 'open';
+    const jobs = await q(sb.from('jobs').select('*, job_lines(id), job_sections(department_id,state)').order('created_at', { ascending: false }).limit(300));
     this.rows = jobs;
-    return topbar('Job tickets', 'Load out everything for a job in one go, print the manifest, and bring it all back against the ticket.',
-      `<button class="btn tagbtn" id="newjob">${ico('plus')}New job ticket</button>`) +
-      `<div class="filters"><input type="search" id="q" placeholder="Search job no., well, client or crew lead">
-        <div class="seg" id="seg">${[['open', 'Open'], ['draft', 'Drafts'], ['out', 'Out on job'], ['closed', 'Closed'], ['all', 'All']].map(([k, l]) => `<button data-v="${k}" class="${this.view === k ? 'on' : ''}">${l}</button>`).join('')}</div></div>
-      <section class="panel"><div class="tablewrap"><table class="t stack" id="tbl"><thead><tr><th>Ticket</th><th>Job / well</th><th>Client</th><th>Crew lead</th><th>Base</th><th class="num">Items</th><th>Return by</th><th>Status</th></tr></thead><tbody></tbody></table></div></section>`;
+    return topbar('Materials requests', 'Request everything for a job in one go. Each service line’s admin approves and issues its own items.',
+      `<button class="btn tagbtn" id="newjob">${ico('plus')}New materials request</button>`) +
+      `<div class="filters"><input type="search" id="q" placeholder="Search request no., well, client or requester">
+        <div class="seg" id="seg">${[['open', 'Open'], ['mine', 'My requests'], ['waiting', 'Waiting for approval'], ['out', 'Out on job'], ['draft', 'Drafts'], ['closed', 'Closed'], ['all', 'All']].map(([k, l]) => `<button data-v="${k}" class="${this.view === k ? 'on' : ''}">${l}</button>`).join('')}</div></div>
+      <section class="panel"><div class="tablewrap"><table class="t stack" id="tbl"><thead><tr><th>Request</th><th>Job / well</th><th>Client</th><th>Requester</th><th>Service lines</th><th class="num">Items</th><th>Return by</th><th>Status</th></tr></thead><tbody></tbody></table></div></section>`;
   },
   bind(main) {
     const t = localISO(0); let qq = '';
     const draw = () => {
-      const v = this.view;
-      const rows = this.rows.filter(j => (v === 'all' || (v === 'open' ? ['draft', 'out'].includes(j.status) : j.status === v))
-        && (!qq || `${j.job_no} ${j.title} ${j.client || ''} ${j.crew_lead || ''} ${j.field || ''}`.toLowerCase().includes(qq)));
-      $('#tbl tbody', main).innerHTML = rows.length ? rows.map(j => `<tr class="click" data-id="${j.id}">
+      const v = this.view; const me = S.viewAs ? null : S.profile.id;
+      const rows = this.rows.filter(j => (v === 'all' || (v === 'open' ? ['draft', 'submitted', 'partial', 'out'].includes(j.status)
+          : v === 'mine' ? (j.requester_id === me || j.created_by === me) && !['cancelled'].includes(j.status)
+          : v === 'waiting' ? ['submitted', 'partial'].includes(j.status) : v === 'out' ? ['out', 'partial'].includes(j.status) : j.status === v))
+        && (!qq || `${j.job_no} ${j.title} ${j.client || ''} ${j.requester_name || ''} ${j.field || ''}`.toLowerCase().includes(qq)));
+      $('#tbl tbody', main).innerHTML = rows.length ? rows.map(j => {
+        const waitMine = (j.job_sections || []).some(s => s.state === 'pending' && canAdmin(s.department_id));
+        return `<tr class="click" data-id="${j.id}">
         <td>${tag(j.job_no)}</td><td class="full"><div class="name">${esc(j.title)}</div>${j.field ? `<div class="sub">${esc(j.field)}</div>` : ''}</td>
-        <td>${esc(j.client || '—')}</td><td class="hide-m">${esc(j.crew_lead || '—')}</td><td class="hide-m">${esc(locName(j.base_location_id))}</td>
+        <td>${esc(j.client || '—')}</td><td>${esc(j.requester_name || '—')}</td>
+        <td class="hide-m">${(j.job_sections || []).map(s => `<span class="linebadge sec-${s.state}">${esc(lineShort(s.department_id))}</span>`).join(' ') || '<span class="sub">—</span>'}</td>
         <td class="num">${(j.job_lines || []).length}</td>
-        <td>${j.expected_return ? (j.status === 'out' && j.expected_return < t ? chip('overdue', fd(j.expected_return)) : fd(j.expected_return)) : '—'}</td>
-        <td>${chip(...JOB_STATUS[j.status])}</td></tr>`).join('')
-        : `<tr><td colspan="8" class="empty">${this.rows.length ? 'No tickets here.' : 'No job tickets yet. Create one when equipment is going out to a job.'}</td></tr>`;
+        <td>${j.expected_return ? (['out', 'partial'].includes(j.status) && j.expected_return < t ? chip('overdue', fd(j.expected_return)) : fd(j.expected_return)) : '—'}</td>
+        <td>${chip(...JOB_STATUS[j.status])}${waitMine ? ' ' + chip('soon', 'Needs you') : ''}</td></tr>`;
+      }).join('')
+        : `<tr><td colspan="8" class="empty">${this.rows.length ? 'No requests here.' : 'No materials requests yet. Create one when equipment is needed for a job.'}</td></tr>`;
     };
     $('#q', main).oninput = debounce(e => { qq = e.target.value.toLowerCase(); draw(); }, 120);
     $$('#seg button', main).forEach(b => b.onclick = () => { this.view = b.dataset.v; $$('#seg button', main).forEach(x => x.classList.toggle('on', x === b)); draw(); });
@@ -38,23 +48,25 @@ ROUTES.jobs = {
   }
 };
 
-function editJob(j) {
+function editJob(j, after) {
+  const me = S.profile.id;
   return modal({
-    title: j ? 'Edit ticket details' : 'New job ticket', submit: j ? 'Save' : 'Create ticket',
+    title: j ? 'Edit request details' : 'New materials request', submit: j ? 'Save' : 'Create request',
     body: `<label class="f">Job, well or site<input type="text" name="title" value="${esc(j?.title)}" required placeholder="e.g. Mahin-5 slickline intervention"></label>
-      <div class="row2"><label class="f">Client<input type="text" name="client" value="${esc(j?.client)}" placeholder="e.g. NPDC"></label>
-      <label class="f">Field / location<input type="text" name="field" value="${esc(j?.field)}" placeholder="e.g. Mahin field"></label></div>
-      <div class="row2"><label class="f">Leaves from<select name="base">${realLocOptions(j?.base_location_id || realLocs()[0]?.id)}</select></label>
-      <label class="f">Crew lead<input type="text" name="crew" value="${esc(j?.crew_lead)}" placeholder="Person responsible"></label></div>
-      <div class="row2"><label class="f">Start date<input type="date" name="start" value="${esc(j?.start_date || localISO(0))}"></label>
+      <div class="row2"><label class="f">Requester<select name="req">${activePeople().map(p => opt(p.id, p.full_name || p.email, j?.requester_id || me)).join('')}</select></label>
+      <label class="f">Client<input type="text" name="client" value="${esc(j?.client)}" placeholder="e.g. NPDC"></label></div>
+      <div class="row2"><label class="f">Field / location<input type="text" name="field" value="${esc(j?.field)}" placeholder="e.g. Mahin field"></label>
+      <label class="f">Leaves from<select name="base">${realLocOptions(j?.base_location_id || realLocs()[0]?.id)}</select></label></div>
+      <div class="row2"><label class="f">Needed from<input type="date" name="start" value="${esc(j?.start_date || localISO(0))}"></label>
       <label class="f">Expected back<input type="date" name="ret" value="${esc(j?.expected_return)}"></label></div>
       <label class="f">Notes<textarea name="notes">${esc(j?.notes)}</textarea></label>`,
     onSubmit: async x => {
       if (!x.title.trim()) throw new Error('Enter the job, well or site.');
-      const row = { title: x.title.trim(), client: x.client || null, field: x.field || null, base_location_id: +x.base, crew_lead: x.crew || null, start_date: x.start || null, expected_return: x.ret || null, notes: x.notes || null };
+      const row = { title: x.title.trim(), requester_id: x.req, client: x.client || null, field: x.field || null, base_location_id: +x.base, start_date: x.start || null, expected_return: x.ret || null, notes: x.notes || null };
       if (j) { await q(sb.from('jobs').update(row).eq('id', j.id)); toast('Saved'); render({ quiet: true }); return; }
       const nj = await q(sb.from('jobs').insert(row).select().single());
-      toast(`Ticket ${nj.job_no} created. Now add the items.`); go('#/job/' + nj.id);
+      if (after) return after(nj);
+      toast(`Request ${nj.job_no} created. Now add the items.`); go('#/job/' + nj.id);
     }
   });
 }
@@ -62,72 +74,126 @@ function editJob(j) {
 ROUTES.job = {
   async load(parts) {
     const id = +parts[1];
-    const [j, lines] = await Promise.all([
+    const [j, lines, secs] = await Promise.all([
       q(sb.from('jobs').select('*').eq('id', id).maybeSingle()),
       q(sb.from('job_lines').select('*, items(id,code,name,unit,item_type,department_id), checkouts(id,qty,open_qty,missing_qty,closed_at)').eq('job_id', id).order('id')),
+      q(sb.from('job_sections').select('*').eq('job_id', id)),
       items(), stockRows(),
     ]);
-    if (!j) return topbar('Ticket not found') + '<a class="btn" href="#/jobs">Back to job tickets</a>';
-    this.ctx = { j, lines };
-    const draft = j.status === 'draft', out = j.status === 'out';
-    const moves = j.status !== 'draft' ? await q(sb.from('movements').select('type,qty,checkout_id,to_status').in('checkout_id', lines.map(l => l.checkout_id).filter(Boolean)).in('type', ['return', 'issue', 'sale', 'lost'])) : [];
-    this.ctx.moves = moves;
+    if (!j) return topbar('Request not found') + '<a class="btn" href="#/jobs">Back to materials requests</a>';
+    const moves = j.status !== 'draft' && lines.some(l => l.checkout_id) ? await q(sb.from('movements').select('type,qty,checkout_id,to_status').in('checkout_id', lines.map(l => l.checkout_id).filter(Boolean)).in('type', ['return', 'issue', 'sale', 'lost'])) : [];
+    this.ctx = { j, lines, secs, moves };
+    const draft = j.status === 'draft';
+    const canReturn = ['out', 'partial'].includes(j.status) && lines.some(l => l.checkouts && !l.checkouts.closed_at);
     const tally = (l, type, st) => moves.filter(m => m.checkout_id === l.checkout_id && m.type === type && (!st || m.to_status === st)).reduce((a, m) => a + +m.qty, 0);
-    return `<a class="back" href="#/jobs">← Job tickets</a>
+    const lineIds = [...new Set(lines.map(l => l.items?.department_id))].sort((a, b) => (S.depts.findIndex(d => d.id === a)) - (S.depts.findIndex(d => d.id === b)));
+    const section = d => {
+      const sec = secs.find(s => s.department_id === d); const ls = lines.filter(l => l.items?.department_id === d);
+      const st = sec ? sec.state : draft ? null : 'pending';
+      return `<section class="panel mrsec ${st ? 'sec-' + st : ''}"><header><h2>${esc(lineName(d))}</h2>${st ? chip(...SEC_STATUS[st]) : ''}
+        <span class="meta">${sec?.decided_by_name ? `${sec.state === 'issued' ? 'Issued' : 'Rejected'} by ${esc(sec.decided_by_name)} · ${fdt(sec.decided_at)}` : plural(ls.length, 'item')}</span>
+        ${st === 'pending' && canAdmin(d) ? `<div class="right"><button class="btn small tagbtn" data-issue="${d}">${ico('truck')}Approve &amp; issue</button><button class="btn small" data-reject="${d}">Reject</button></div>` : ''}</header>
+        ${sec?.note ? `<div class="body"><div class="notice bad">Reason: ${esc(sec.note)}</div></div>` : ''}
+        <div class="tablewrap"><table class="t stack"><thead><tr><th>Item</th><th>From</th><th class="num">Qty</th><th>Serials</th>
+          ${st === 'issued' ? '<th class="num">Back</th><th class="num">Damaged</th><th class="num">Used</th><th class="num">Sold</th><th class="num">Still out</th>' : '<th class="num">In store now</th><th></th>'}</tr></thead><tbody>
+          ${ls.map(l => `<tr><td class="full"><a href="#/item/${l.item_id}" class="plain">${tag(l.items?.code)} <span class="name">${esc(l.items?.name)}</span></a></td>
+            <td>${esc(locName(l.location_id))}</td><td class="num"><b>${fq(l.qty)}</b></td><td class="sub">${esc(l.serials || '')}</td>
+            ${st === 'issued' ? `<td class="num">${zq(tally(l, 'return', 'available'))}</td><td class="num">${zq(tally(l, 'return', 'damaged'))}</td><td class="num">${zq(tally(l, 'issue'))}</td><td class="num">${zq(tally(l, 'sale'))}</td>
+                 <td class="num">${l.checkouts && !l.checkouts.closed_at ? `<b>${fq(l.checkouts.open_qty)}</b>${+l.checkouts.missing_qty ? ' ' + chip('overdue', fq(l.checkouts.missing_qty) + ' missing') : ''}` : chip('ok', 'Done')}</td>`
+              : `<td class="num">${stockOf(l.item_id, l.location_id) < l.qty && st !== 'rejected' ? chip('overdue', fq(stockOf(l.item_id, l.location_id)) + ' only') : fq(stockOf(l.item_id, l.location_id))}</td>
+                 <td class="num">${draft ? `<button class="btn small link danger" data-del="${l.id}">Remove</button>` : ''}</td>`}</tr>`).join('')}
+          </tbody></table></div></section>`;
+    };
+    return `<a class="back" href="#/jobs">← Materials requests</a>
       <div class="item-head"><div>${tag(j.job_no, 'big')} ${chip(...JOB_STATUS[j.status])}
         <h1>${esc(j.title)}</h1>
-        <div class="facts">${j.client ? `<span>Client: ${esc(j.client)}</span>` : ''}${j.field ? `<span>${esc(j.field)}</span>` : ''}<span>From ${esc(locName(j.base_location_id))}</span>
-          ${j.crew_lead ? `<span>Crew lead: ${esc(j.crew_lead)}</span>` : ''}${j.expected_return ? `<span>Back by ${fd(j.expected_return)}</span>` : ''}</div>
-        <div class="facts sub">Created by ${esc(j.created_by_name || '')} ${fdt(j.created_at)}${j.dispatched_at ? ` · dispatched by ${esc(j.dispatched_by_name || '')} ${fdt(j.dispatched_at)}` : ''}${j.closed_at ? ` · closed ${fdt(j.closed_at)}` : ''}</div></div></div>
+        <div class="facts"><span>Requester: <b>${esc(j.requester_name || '—')}</b></span>${j.client ? `<span>Client: ${esc(j.client)}</span>` : ''}${j.field ? `<span>${esc(j.field)}</span>` : ''}<span>From ${esc(locName(j.base_location_id))}</span>
+          ${j.expected_return ? `<span>Back by ${fd(j.expected_return)}</span>` : ''}</div>
+        <div class="facts sub">Created by ${esc(j.created_by_name || '')} ${fdt(j.created_at)}${j.submitted_at ? ` · submitted ${fdt(j.submitted_at)}` : ''}${j.closed_at ? ` · closed ${fdt(j.closed_at)}` : ''}</div></div></div>
       <div class="actionrow">
-        ${draft ? `<button class="btn tagbtn" id="add">${ico('plus')}Add items</button><button class="btn primary" id="dispatch" ${lines.length ? '' : 'disabled'}>${ico('truck')}Dispatch: everything goes out</button>
+        ${draft ? `<button class="btn tagbtn" id="add">${ico('plus')}Add items</button><button class="btn primary" id="submit" ${lines.length ? '' : 'disabled'}>${ico('check')}Submit request</button>
           <button class="btn" id="edit">Edit details</button>` : ''}
-        ${out ? `<button class="btn tagbtn" id="ret">${ico('out')}Record return</button>` : ''}
-        <button class="btn" id="manifest">${ico('pdf')}${j.status === 'closed' ? 'Job report (PDF)' : 'Load-out manifest (PDF)'}</button>
-        ${draft ? '<button class="btn danger" id="cancel">Cancel ticket</button>' : ''}
+        ${canReturn ? `<button class="btn tagbtn" id="ret">${ico('out')}Record return</button>` : ''}
+        ${secs.some(s => s.state === 'issued') ? `<button class="btn" id="manifest">${ico('pdf')}Load-out Manifest (PDF)</button>` : ''}
+        ${draft ? '<button class="btn danger" id="cancel">Cancel request</button>' : ''}
       </div>
-      ${draft ? `<div class="notice">Draft: nothing has left the store yet. Add the items, check the list, then press <b>Dispatch</b>. All items are checked out to this job in one step.</div>` : ''}
-      <section class="panel"><header><h2>Items on this ticket</h2><span class="meta">${plural(lines.length, 'line')}</span></header>
-        ${lines.length ? `<div class="tablewrap"><table class="t stack"><thead><tr><th>Item</th><th>From</th><th class="num">Qty</th><th>Serials</th>
-          ${draft ? '<th></th>' : '<th class="num">Back</th><th class="num">Damaged</th><th class="num">Used</th><th class="num">Sold</th><th class="num">Still out</th>'}</tr></thead><tbody>
-          ${lines.map(l => `<tr><td class="full"><a href="#/item/${l.item_id}" class="plain">${tag(l.items?.code)} <span class="name">${esc(l.items?.name)}</span></a><div class="sub">${esc(lineShort(l.items?.department_id))}</div></td>
-            <td>${esc(locName(l.location_id))}</td><td class="num"><b>${fq(l.qty)}</b></td><td class="sub">${esc(l.serials || '')}</td>
-            ${draft ? `<td class="num"><button class="btn small link danger" data-del="${l.id}">Remove</button></td>`
-              : `<td class="num">${zq(tally(l, 'return', 'available'))}</td><td class="num">${zq(tally(l, 'return', 'damaged'))}</td><td class="num">${zq(tally(l, 'issue'))}</td><td class="num">${zq(tally(l, 'sale'))}</td>
-                 <td class="num">${l.checkouts && !l.checkouts.closed_at ? `<b>${fq(l.checkouts.open_qty)}</b>${+l.checkouts.missing_qty ? ' ' + chip('overdue', fq(l.checkouts.missing_qty) + ' missing') : ''}` : chip('ok', 'Done')}</td>`}</tr>`).join('')}
-          </tbody></table></div>` : `<div class="empty">No items yet. Press <b>Add items</b> and search or scan what’s going out.</div>`}</section>
+      ${draft ? `<div class="notice">Draft: nothing has left the store. Add the items, then press <b>Submit request</b>. Each service line’s admin approves and issues its own items${lineIds.some(d => canAdmin(d)) ? ' (items from lines you look after are issued as soon as you submit)' : ''}.</div>` : ''}
+      ${j.status === 'partial' ? `<div class="notice">Partly issued: some service lines have issued their items; others are still waiting for their admin.</div>` : ''}
+      ${lines.length ? lineIds.map(section).join('') : `<section class="panel"><div class="empty">No items yet. Press <b>Add items</b> and search or scan what’s needed. You can also tick items on the Inventory page and choose <b>Add to materials request</b>.</div></section>`}
       ${j.notes ? `<section class="panel"><div class="body">${esc(j.notes)}</div></section>` : ''}`;
   },
   bind(main) {
-    const { j, lines } = this.ctx || {}; if (!j) return;
+    const { j, lines, secs } = this.ctx || {}; if (!j) return;
     const b = id => $(id, main);
     if (b('#add')) b('#add').onclick = () => addJobItems(j);
     if (b('#edit')) b('#edit').onclick = () => editJob(j);
-    if (b('#cancel')) b('#cancel').onclick = async () => { if (!confirm('Cancel this ticket? Nothing has gone out, so nothing changes in stock.')) return; await q(sb.from('jobs').update({ status: 'cancelled' }).eq('id', j.id)); toast('Ticket cancelled'); render(); };
-    if (b('#dispatch')) b('#dispatch').onclick = () => modal({ title: `Dispatch ${j.job_no}`, submit: 'Dispatch now',
-      sub: `${plural(lines.length, 'line')} will be checked out to ${esc(j.title)}${j.crew_lead ? ` with ${esc(j.crew_lead)}` : ''}.`,
-      body: `<p>Print the load-out manifest for the driver and gate before the truck leaves.</p>`,
-      onSubmit: async () => { await q(sb.rpc('dispatch_job', { p_job: j.id })); toast(`${j.job_no} dispatched`); refresh(); } });
+    if (b('#cancel')) b('#cancel').onclick = async () => { if (!confirm('Cancel this request? Nothing has gone out, so nothing changes in stock.')) return; try { await q(sb.from('jobs').update({ status: 'cancelled' }).eq('id', j.id)); toast('Request cancelled'); render(); } catch (e) { toast(niceError(e), true); } };
+    if (b('#submit')) b('#submit').onclick = () => {
+      const ds = [...new Set(lines.map(l => l.items?.department_id))];
+      return modal({ title: `Submit ${j.job_no}`, submit: 'Submit request',
+        sub: `${plural(lines.length, 'item')} for ${esc(j.title)}, requested by ${esc(j.requester_name || '')}.`,
+        body: `<ul class="steps">${ds.map(d => `<li><b>${esc(lineName(d))}</b>: ${canAdmin(d) ? 'issued straight away (you’re an admin of this line)' : 'sent to this line’s admin to approve &amp; issue'}</li>`).join('')}</ul>`,
+        onSubmit: async () => { const st = await q(sb.rpc('submit_request', { p_job: j.id })); toast(st === 'out' ? `${j.job_no} issued` : `${j.job_no} submitted`); refresh(); } });
+    };
+    $$('[data-issue]', main).forEach(x => x.onclick = () => {
+      const d = +x.dataset.issue; const ls = lines.filter(l => l.items?.department_id === d);
+      return modal({ title: `Approve & issue: ${lineShort(d)}`, submit: 'Approve & issue',
+        sub: `${plural(ls.length, 'item')} will be checked out to ${esc(j.job_no)} ${esc(j.title)} with ${esc(j.requester_name || '')}.`,
+        body: `<table class="t"><tbody>${ls.map(l => `<tr><td>${tag(l.items?.code)} ${esc(l.items?.name)}</td><td>${esc(locName(l.location_id))}</td><td class="num"><b>${fq(l.qty)}</b></td></tr>`).join('')}</tbody></table>`,
+        onSubmit: async () => { const st = await q(sb.rpc('issue_section', { p_job: j.id, p_dept: d })); toast(`${lineShort(d)} items issued`); refresh(); } });
+    });
+    $$('[data-reject]', main).forEach(x => x.onclick = () => {
+      const d = +x.dataset.reject;
+      return modal({ title: `Reject ${lineShort(d)} items`, submit: 'Reject', danger: true, sub: 'Nothing leaves the store. The requester sees your reason. Other service lines on this request aren’t affected.',
+        body: '<label class="f">Reason<textarea name="note" required></textarea></label>',
+        onSubmit: async y => { await q(sb.rpc('reject_section', { p_job: j.id, p_dept: d, p_note: y.note })); toast('Rejected'); refresh(); } });
+    });
     if (b('#ret')) b('#ret').onclick = () => jobReturn(j, lines);
-    b('#manifest').onclick = () => jobManifest(j, lines, this.ctx.moves);
-    $$('[data-del]', main).forEach(x => x.onclick = async () => { await q(sb.from('job_lines').delete().eq('id', +x.dataset.del)); render({ quiet: true }); });
+    if (b('#manifest')) b('#manifest').onclick = () => jobManifest(j, lines, this.ctx.moves, secs);
+    $$('[data-del]', main).forEach(x => x.onclick = async () => { try { await q(sb.from('job_lines').delete().eq('id', +x.dataset.del)); render({ quiet: true }); } catch (e) { toast(niceError(e), true); } });
   }
 };
+
+// Add ticked items from the Inventory list to a draft request
+async function addSelectedToRequest(sel) {
+  const drafts = await q(sb.from('jobs').select('id,job_no,title,base_location_id,requester_name').eq('status', 'draft').order('created_at', { ascending: false }).limit(50));
+  await stockRows();
+  const addTo = async j => {
+    const existing = await q(sb.from('job_lines').select('item_id').eq('job_id', j.id));
+    const rows = sel.filter(i => !existing.some(e => e.item_id === i.id)).map(i => {
+      const loc = stockOf(i.id, j.base_location_id) > 0 ? j.base_location_id : (S.locs.filter(l => stockOf(i.id, l.id) > 0).sort((a, b) => stockOf(i.id, b.id) - stockOf(i.id, a.id))[0]?.id);
+      return loc ? { job_id: j.id, item_id: i.id, location_id: loc, qty: 1 } : null;
+    });
+    const ok = rows.filter(Boolean);
+    if (ok.length) await q(sb.from('job_lines').insert(ok));
+    const skipped = sel.length - ok.length;
+    S.inv.sel.clear(); toast(`Added ${plural(ok.length, 'item')} to ${j.job_no}${skipped ? ` · ${skipped} skipped (none in store or already on it)` : ''}. Check the quantities.`);
+    go('#/job/' + j.id);
+  };
+  return modal({
+    title: `Add ${plural(sel.length, 'item')} to a materials request`, submit: 'Add items', sub: 'Each item is added with quantity 1 from where it’s in store. You can change quantities on the request before submitting.',
+    body: `<label class="f">Request<select name="job"><option value="new">+ New materials request</option>${drafts.map(d => opt(d.id, `${d.job_no} · ${d.title}${d.requester_name ? ' · ' + d.requester_name : ''}`)).join('')}</select></label>`,
+    onSubmit: async x => {
+      if (x.job === 'new') { setTimeout(() => editJob(null, nj => addTo(nj)), 0); return; }
+      await addTo(drafts.find(d => d.id === +x.job));
+    }
+  });
+}
 
 function addJobItems(j) {
   const picked = new Map();
   return modal({
-    title: `Add items to ${j.job_no}`, wide: true, submit: 'Add to ticket',
-    sub: `Search or scan. Items come from ${esc(locName(j.base_location_id))} unless you pick another location.`,
+    title: `Add items to ${j.job_no}`, wide: true, submit: 'Add to request',
+    sub: `Search or scan. Items come from ${esc(locName(j.base_location_id))} unless you pick another location. Items from any service line can go on one request.`,
     body: `<input type="search" id="pk-q" placeholder="Search code or description, or scan a label" autocomplete="off">
-      <div id="pk-res" class="pickres"></div><h3 class="grp">On this ticket</h3><div id="pk-sel" class="muted">Nothing picked yet.</div>`,
+      <div id="pk-res" class="pickres"></div><h3 class="grp">On this request</h3><div id="pk-sel" class="muted">Nothing picked yet.</div>`,
     onOpen: d => {
       const res = $('#pk-res', d), sel = $('#pk-sel', d), qi = $('#pk-q', d);
       const avail = (id, loc) => stockOf(id, loc);
       const drawSel = () => {
         if (!picked.size) { sel.innerHTML = 'Nothing picked yet.'; return; }
         sel.innerHTML = `<table class="t"><thead><tr><th>Item</th><th>From</th><th class="num">Qty</th><th>Serials</th><th></th></tr></thead><tbody>${[...picked.values()].map(p => `<tr data-k="${p.it.id}">
-          <td>${tag(p.it.code)} ${esc(p.it.name)}</td>
+          <td>${tag(p.it.code)} ${esc(p.it.name)}<div class="sub">${esc(lineShort(p.it.department_id))}</div></td>
           <td><select data-f="loc">${S.locs.filter(l => avail(p.it.id, l.id) > 0 || l.id === p.loc).map(l => opt(l.id, `${l.name} (${avail(p.it.id, l.id)})`, p.loc)).join('')}</select></td>
           <td class="num"><input type="number" data-f="qty" min="0" step="any" value="${p.qty}" style="width:80px"></td>
           <td><input type="text" data-f="serials" value="${esc(p.serials)}" placeholder="optional"></td>
@@ -145,9 +211,9 @@ function addJobItems(j) {
       const search = () => {
         const t = qi.value.trim().toLowerCase(); if (!t) { res.innerHTML = ''; return; }
         const exact = matchCode(t); if (exact.length === 1 && t.length > 6) { add(exact[0]); return; }
-        const hits = S.items.filter(i => i.active && canAct(i.department_id) && `${i.code || ''} ${i.name} ${i.serials || ''}`.toLowerCase().includes(t)).slice(0, 25);
+        const hits = S.items.filter(i => i.active && `${i.code || ''} ${i.name} ${i.serials || ''}`.toLowerCase().includes(t)).slice(0, 25);
         res.innerHTML = hits.length ? hits.map(i => `<button type="button" class="pick" data-id="${i.id}">${tag(i.code)} <span>${esc(i.name)}</span>
-          <span class="sub">${fq(avail(i.id, j.base_location_id))} at ${esc(locName(j.base_location_id))} · ${fq(i.qty_available)} in store</span></button>`).join('') : '<div class="empty">No match in your service line(s).</div>';
+          <span class="sub">${esc(i.line)} · ${fq(avail(i.id, j.base_location_id))} at ${esc(locName(j.base_location_id))} · ${fq(i.qty_available)} in store</span></button>`).join('') : '<div class="empty">No match.</div>';
         $$('[data-id]', res).forEach(x => x.onclick = () => add(S.items.find(i => i.id === +x.dataset.id)));
       };
       qi.oninput = debounce(search, 150);
@@ -167,7 +233,7 @@ function addJobItems(j) {
 
 function jobReturn(j, lines) {
   const open = lines.filter(l => l.checkouts && !l.checkouts.closed_at);
-  if (!open.length) return toast('Everything on this ticket is already accounted for.');
+  if (!open.length) return toast('Everything issued on this request is already accounted for.');
   return modal({
     title: `Record return: ${j.job_no}`, wide: true, submit: 'Save return',
     sub: 'For each line, enter what came back and what was used, sold or is missing. Anything not entered stays out on the job.',
@@ -178,7 +244,7 @@ function jobReturn(j, lines) {
         ${['good', 'damaged', 'used', 'sold', 'missing'].map(k => `<td><input type="number" min="0" step="any" max="${o}" name="${k}_${l.id}" value="${(k === 'good' && t === 'equipment') ? o : ''}" placeholder="0"></td>`).join('')}</tr>`; }).join('')}
       </tbody></table></div>
       <label class="f mt">Notes<input type="text" name="notes" placeholder="Condition, who brought it back"></label>
-      <p class="muted">Missing items stay on the ticket and your admin is alerted. An admin can write them off from the item page.</p>`,
+      <p class="muted">Missing items stay on the request and the service line’s admin is alerted. An admin can write them off from the item page.</p>`,
     onSubmit: async x => {
       const rows = open.map(l => ({ line_id: l.id, good: x['good_' + l.id], damaged: x['damaged_' + l.id], used: x['used_' + l.id], sold: x['sold_' + l.id], missing: x['missing_' + l.id], location_id: +x.loc, notes: x.notes || null }))
         .filter(r => ['good', 'damaged', 'used', 'sold', 'missing'].some(k => +r[k] > 0));
@@ -189,24 +255,33 @@ function jobReturn(j, lines) {
   });
 }
 
-async function jobManifest(j, lines, moves = []) {
+async function jobManifest(j, lines, moves = [], secs = []) {
   try {
     toast('Preparing the PDF…');
     const tally = (l, type, st) => moves.filter(m => m.checkout_id === l.checkout_id && m.type === type && (!st || m.to_status === st)).reduce((a, m) => a + +m.qty, 0);
     const closed = j.status === 'closed';
-    const rows = lines.map((l, i) => ({ n: i + 1, code: l.items?.code || '', name: l.items?.name || '', line: lineShort(l.items?.department_id), from: locName(l.location_id), qty: fq(l.qty), serials: l.serials || '',
-      back: closed ? fq(tally(l, 'return')) : '', used: closed ? fq(tally(l, 'issue') + tally(l, 'sale')) : '', chk1: '', chk2: '' }));
-    const columns = [{ header: '#', dataKey: 'n', width: 8 }, { header: 'Item Code', dataKey: 'code', width: 42, bold: true }, { header: 'Description', dataKey: 'name' }, { header: 'Line', dataKey: 'line', width: 20 },
-      { header: 'From', dataKey: 'from', width: 24 }, { header: 'Qty', dataKey: 'qty', width: 12, align: 'right' }, { header: 'Serials', dataKey: 'serials', width: 30 },
+    const ds = [...new Set(lines.map(l => l.items?.department_id))].sort((a, b) => S.depts.findIndex(d => d.id === a) - S.depts.findIndex(d => d.id === b));
+    let n = 0;
+    const columns = [{ header: '#', dataKey: 'n', width: 8 }, { header: 'Item Code', dataKey: 'code', width: 42, bold: true }, { header: 'Description', dataKey: 'name' },
+      { header: 'From', dataKey: 'from', width: 34 }, { header: 'Qty', dataKey: 'qty', width: 12, align: 'right' }, { header: 'Serials', dataKey: 'serials', width: 30 },
       ...(closed ? [{ header: 'Returned', dataKey: 'back', width: 18, align: 'right' }, { header: 'Used / sold', dataKey: 'used', width: 20, align: 'right' }] : [{ header: 'Loaded', dataKey: 'chk1', width: 16 }, { header: 'Returned', dataKey: 'chk2', width: 18 }])];
+    const sections = ds.map(d => {
+      const sec = secs.find(s => s.department_id === d);
+      const st = sec?.state || 'pending';
+      return { heading: lineName(d), headingNote: st === 'issued' ? `Issued by ${sec.decided_by_name || ''} · ${fdt(sec.decided_at)}` : st === 'rejected' ? 'Rejected · not issued' : 'Waiting for approval · not issued yet',
+        columns, rows: lines.filter(l => l.items?.department_id === d).map(l => ({ n: ++n, code: l.items?.code || '', name: l.items?.name || '', from: locName(l.location_id), qty: fq(l.qty), serials: l.serials || '',
+          back: closed ? fq(tally(l, 'return')) : '', used: closed ? fq(tally(l, 'issue') + tally(l, 'sale')) : '', chk1: '', chk2: '' })) };
+    });
+    const pending = secs.filter(s => s.state === 'pending').length;
     await brandPdf({
-      file: `${j.job_no}_${closed ? 'Job_Report' : 'Manifest'}.pdf`, title: closed ? 'Job Report' : 'Load-out Manifest', subtitle: `${j.job_no} · ${j.title}`,
-      meta: [['Ticket', j.job_no], ['Client', j.client || '—'], ['Field / site', j.field || j.title], ['Leaves from', locName(j.base_location_id)], ['Crew lead', j.crew_lead || '—'],
-        ['Dispatched', j.dispatched_at ? fdt(j.dispatched_at) : 'Not yet'], ['Expected back', j.expected_return ? fd(j.expected_return) : '—']],
-      kpis: [{ label: 'Lines', value: lines.length }, { label: 'Total pieces', value: fq(lines.reduce((a, l) => a + +l.qty, 0)) }],
-      intro: `${j.title}${j.client ? ' for ' + j.client : ''}. Check every item against this list when loading and again on return.`,
-      sections: [{ heading: 'Items', columns, rows }],
-      signatures: [{ label: 'Issued by (store)', name: j.dispatched_by_name || '' }, { label: 'Driver' }, { label: 'Crew lead', name: j.crew_lead || '' }, { label: 'Client representative' }],
+      file: `${j.job_no}_Load-out_Manifest.pdf`, title: 'Load-out Manifest', subtitle: `${j.job_no} · ${j.title}`,
+      meta: [['Request', j.job_no], ['Requester', j.requester_name || '—'], ['Client', j.client || '—'], ['Field / site', j.field || j.title], ['Leaves from', locName(j.base_location_id)],
+        ['First issued', j.dispatched_at ? fdt(j.dispatched_at) : 'Not yet'], ['Expected back', j.expected_return ? fd(j.expected_return) : '—']],
+      kpis: [{ label: 'Lines', value: lines.length }, { label: 'Total pieces', value: fq(lines.reduce((a, l) => a + +l.qty, 0)) }, ...(pending ? [{ label: 'Lines not yet issued', value: pending, tone: 'warn' }] : [])],
+      intro: `${j.title}${j.client ? ' for ' + j.client : ''}. Check every item against this list when loading and again on return.${pending ? ' Sections marked “waiting for approval” have not been issued and must not be loaded.' : ''}`,
+      sections,
+      signatures: [{ label: 'Requester', name: j.requester_name || '' }, ...secs.filter(s => s.state === 'issued').map(s => ({ label: `Issued by (${lineShort(s.department_id)})`, name: s.decided_by_name || '', date: s.decided_at ? fd(s.decided_at) : '' })),
+        { label: 'Driver' }, { label: 'Client representative' }],
     });
   } catch (e) { console.error(e); toast(niceError(e), true); }
 }
@@ -427,11 +502,16 @@ ROUTES.approvals = {
     let rows = await q(qb);
     if (S.line) rows = rows.filter(b => b.department_id === +S.line);
     this.rows = rows; S.appr.sel = new Set([...S.appr.sel].filter(id => rows.some(r => r.id === id)));
+    const mrs = isAdmin() && v === 'pending' ? (await q(sb.from('jobs').select('id,job_no,title,requester_name,submitted_at,job_sections(department_id,state)').in('status', ['submitted', 'partial'])))
+      .filter(j => (j.job_sections || []).some(s => s.state === 'pending' && canAdmin(s.department_id) && (!S.line || s.department_id === +S.line))) : [];
     const groups = S.depts.map(d => ({ d, bs: rows.filter(b => b.department_id === d.id) })).filter(g => g.bs.length);
     return topbar(isAdmin() ? 'Approvals' : 'My requests', isAdmin() ? 'Quantity changes, monthly counts and kit details from staff. Approve one by one, in bulk, or a whole service line at once.' : 'Changes you sent for approval, and what happened to them.') +
       lineChips() + `<div class="filters"><div class="seg" id="seg">${[['pending', 'Waiting'], ['done', 'Decided']].map(([k, l]) => `<button data-v="${k}" class="${v === k ? 'on' : ''}">${l}</button>`).join('')}</div></div>
+      ${mrs.length ? `<section class="panel"><header><h2>Materials requests to approve &amp; issue</h2><span class="meta">${mrs.length}</span></header><ul class="list">
+        ${mrs.map(j => `<li><a class="main" href="#/job/${j.id}"><div class="name">${tag(j.job_no)} ${esc(j.title)}</div><div class="sub">${esc(j.requester_name || '')} · submitted ${fdt(j.submitted_at)} · waiting: ${j.job_sections.filter(s => s.state === 'pending' && canAdmin(s.department_id)).map(s => lineShort(s.department_id)).join(', ')}</div></a>
+          <div class="end"><a class="btn small tagbtn" href="#/job/${j.id}">Open</a></div></li>`).join('')}</ul></section>` : ''}
       <div id="bulk"></div>
-      ${groups.length ? groups.map(({ d, bs }) => `<section class="apgroup"><header><h2>${esc(d.name)}</h2><span class="meta">${plural(bs.length, 'request')}</span>
+      ${groups.length || mrs.length ? groups.map(({ d, bs }) => `<section class="apgroup"><header><h2>${esc(d.name)}</h2><span class="meta">${plural(bs.length, 'request')}</span>
         ${v === 'pending' && canAdmin(d.id) ? `<div class="right"><button class="btn small primary" data-all="${d.id}">Approve all ${esc(d.short_name || d.name)}</button></div>` : ''}</header>
         ${bs.map(b => batchCard(b, v === 'pending' && canAdmin(b.department_id))).join('')}</section>`).join('')
         : `<section class="panel"><div class="empty">${v === 'pending' ? (isAdmin() ? 'Nothing waiting for approval.' : 'You have nothing waiting for approval.') : 'No decisions yet.'}</div></section>`}`;

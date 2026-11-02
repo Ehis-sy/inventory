@@ -554,3 +554,19 @@ dialog.modal.wide { width: min(980px, calc(100vw - 24px)); }
   .countgrid { grid-template-columns: 1fr; }
   .countgrid .cg { border-right: 0; }
 }
+
+/* v2.1 */
+.viewas-bar { position: fixed; top: 0; left: 0; right: 0; z-index: 70; background: var(--flame); color: #fff; text-align: center; padding: 7px 12px; font-weight: 600; box-shadow: 0 4px 14px rgba(0,0,0,.2); }
+.viewas-bar .btn { margin-left: 10px; background: rgba(255,255,255,.18); border-color: rgba(255,255,255,.5); color: #fff; min-height: 28px; }
+body.viewing-as .shell, body.viewing-as .launcher { padding-top: 38px; }
+body.viewing-as .bell { top: 54px; }
+.viewas-btn { margin: 4px 0 8px; background: transparent; color: #C7CACE; border-color: #4A4E54; }
+.viewas-btn:hover { color: #fff; border-color: #fff; }
+.mrsec > header { flex-wrap: wrap; }
+.mrsec.sec-issued > header { box-shadow: inset 4px 0 0 var(--ok); }
+.mrsec.sec-pending > header { box-shadow: inset 4px 0 0 #D99A00; }
+.mrsec.sec-rejected > header { box-shadow: inset 4px 0 0 var(--bad); }
+.linebadge.sec-issued { background: var(--ok-bg); color: var(--ok); border-color: #BFE3CE; }
+.linebadge.sec-pending { background: var(--warn-bg); color: var(--warn); border-color: #F0D9A6; }
+.linebadge.sec-rejected { background: var(--bad-bg); color: var(--bad); border-color: #F2C4BF; text-decoration: line-through; }
+.l-foot span { color: #55595E; font-size: 12px; }

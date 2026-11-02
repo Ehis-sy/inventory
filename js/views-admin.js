@@ -208,18 +208,23 @@ ROUTES.team = {
     const linesOf = id => S.members.filter(m => m.profile_id === id).map(m => m.department_id);
     const pending = people.filter(p => p.role === 'pending');
     const admins = people.filter(p => ['admin', 'superadmin'].includes(p.role));
+    const dom = (CFG.SIGNUP_DOMAIN || '').toLowerCase();
+    const offDomain = dom ? people.filter(p => !String(p.email || '').toLowerCase().endsWith('@' + dom) && p.role !== 'disabled') : [];
+    this.offDomain = offDomain;
     const roleOpts = p => isSuper() ? ['pending', 'staff', 'admin', 'superadmin', 'disabled'] : (['pending', 'staff', 'disabled'].includes(p.role) ? ['pending', 'staff', 'disabled'] : null);
     return topbar('Team', isSuper() ? 'Approve people, choose their access and service lines, and set who approves for each line.' : 'Approve new staff and assign them to the service lines you look after.') +
       `<div class="notice ok">To add someone, send them this link and ask them to create an account: <b>${esc(location.origin + location.pathname)}</b>. They’ll appear here for approval.</div>
+      ${offDomain.length && isSuper() ? `<div class="notice">${plural(offDomain.length, 'account')} ${offDomain.length === 1 ? 'isn’t' : 'aren’t'} on a GANKCO email address (@${esc(dom)}). They keep working, but should be moved to their company email. Press <b>Fix email</b> next to each one.</div>` : ''}
       ${pending.length ? `<section class="panel"><header><h2>Waiting for approval</h2><span class="meta">${pending.length}</span></header><ul class="list">
         ${pending.map(p => `<li><div style="flex:1"><div class="name">${esc(p.full_name || '—')}</div><div class="sub">${esc(p.email)} · signed up ${fd(p.created_at)}</div></div>
           <div class="end"><button class="btn small tagbtn" data-approve="${p.id}">Approve</button> <button class="btn small" data-deny="${p.id}">Deny</button></div></li>`).join('')}</ul></section>` : ''}
       <section class="panel"><header><h2>Everyone</h2><span class="meta">${people.length}</span></header><div class="tablewrap"><table class="t stack"><thead><tr><th>Name</th><th>Email</th><th>Access</th><th>Service lines</th><th></th></tr></thead><tbody>
       ${people.map(p => { const ro = roleOpts(p); const ls = linesOf(p.id);
-        return `<tr><td class="full"><div class="name">${esc(p.full_name || '—')}${p.id === S.profile.id ? ' <span class="sub">(you)</span>' : ''}</div></td><td>${esc(p.email)}</td>
+        const off = offDomain.includes(p);
+        return `<tr><td class="full"><div class="name">${esc(p.full_name || '—')}${p.id === S.profile.id ? ' <span class="sub">(you)</span>' : ''}</div></td><td>${esc(p.email)}${off ? ' ' + chip('soon', 'Not a GANKCO email') : ''}</td>
         <td>${ro && p.id !== S.profile.id ? `<select data-role="${p.id}" class="inline">${ro.map(k => opt(k, ROLE_LABEL[k], p.role)).join('')}</select>` : chip(p.role === 'superadmin' ? 'out' : p.role === 'admin' ? 'reserved' : 'muted', ROLE_LABEL[p.role])}</td>
         <td>${p.role === 'superadmin' ? '<span class="sub">All lines</span>' : ls.length ? ls.map(d => `<span class="linebadge">${esc(lineShort(d))}</span>`).join(' ') : '<span class="sub">None</span>'}</td>
-        <td class="num">${p.role !== 'superadmin' && (isSuper() || ['staff', 'pending', 'disabled'].includes(p.role)) ? `<button class="btn small" data-lines="${p.id}">Lines</button>` : ''}</td></tr>`; }).join('')}
+        <td class="num nowrap">${off && isSuper() ? `<button class="btn small" data-fix="${p.id}">Fix email</button> ` : ''}${p.role !== 'superadmin' && (isSuper() || ['staff', 'pending', 'disabled'].includes(p.role)) ? `<button class="btn small" data-lines="${p.id}">Lines</button>` : ''}</td></tr>`; }).join('')}
       </tbody></table></div></section>
       ${isSuper() ? `<section class="panel"><header><h2>Who approves for each service line</h2></header><div class="tablewrap"><table class="t stack"><thead><tr><th>Service line</th><th>Main admin</th><th>Backup admin</th></tr></thead><tbody>
         ${S.depts.map(d => `<tr><td class="name">${esc(d.name)}</td>
@@ -227,7 +232,7 @@ ROUTES.team = {
           <td><select data-backup="${d.id}" class="inline"><option value="">None</option>${admins.map(a => opt(a.id, a.full_name || a.email, d.backup_admin)).join('')}</select></td></tr>`).join('')}
         </tbody></table></div><div class="body muted">Approval requests and alerts for a line go to its main and backup admin. As Super Admin you can approve anything.</div></section>` : ''}
       <section class="panel"><div class="body"><b>What each role can do</b>
-        <dl class="kv mt"><dt>Staff</dt><dd>Day-to-day work in their own service line(s): check out and in, job tickets, receive, move between Port Harcourt and Warri, issue and sell, monthly counts and certificates. Quantity corrections and kit details go to their admin for approval. Staff can see all stock but don’t see Setup.</dd>
+        <dl class="kv mt"><dt>Staff</dt><dd>Day-to-day work in their own service line(s): check out and in, materials requests, receive, move between Port Harcourt and Warri, issue and sell, monthly counts and certificates. Quantity corrections and kit details go to their admin for approval. Staff can see all stock but don’t see Setup.</dd>
         <dt>Admin</dt><dd>Everything staff can do, plus approving requests and managing items for their service lines, locations, labels, approving new staff, and the audit log for their lines.</dd>
         <dt>Super Admin</dt><dd>Everything, in every service line: making admins, choosing who approves for each line, settings, and the full audit log.</dd></dl></div></section>`;
   },
@@ -249,6 +254,7 @@ ROUTES.team = {
     $$('[data-approve]', main).forEach(b => b.onclick = () => editLines(b.dataset.approve, true));
     $$('[data-deny]', main).forEach(b => b.onclick = async () => { if (!confirm('Deny access to this person?')) return; await q(sb.rpc('set_user_role', { p_user: b.dataset.deny, p_role: 'disabled' })); toast('Access denied'); render({ quiet: true }); });
     $$('[data-lines]', main).forEach(b => b.onclick = () => editLines(b.dataset.lines, false));
+    $$('[data-fix]', main).forEach(b => b.onclick = () => fixEmail(S.people[b.dataset.fix]));
     $$('[data-role]', main).forEach(s => s.onchange = async () => {
       const prev = S.people[s.dataset.role].role;
       try { await q(sb.rpc('set_user_role', { p_user: s.dataset.role, p_role: s.value })); toast(`Access changed to ${ROLE_LABEL[s.value]}`); await loadLookups(); render({ quiet: true }); }
@@ -262,13 +268,13 @@ ROUTES.team = {
 
 // ================================================================ AUDIT LOG
 const AUDIT_TABLES = { stock: 'Stock movements', items: 'Items', units: 'Serials & kit numbers', unit_components: 'Kit component expiry', kit_components: 'Kit components', certifications: 'Certificates',
-  locations: 'Locations', departments: 'Service lines', categories: 'Categories', profiles: 'People & access', memberships: 'Service-line membership', jobs: 'Job tickets', job_lines: 'Job ticket lines',
+  locations: 'Locations', departments: 'Service lines', categories: 'Categories', profiles: 'People & access', memberships: 'Service-line membership', jobs: 'Materials requests', job_lines: 'Materials request lines', job_sections: 'Request approvals by line',
   change_batches: 'Requests & approvals', counts: 'Monthly counts', app_settings: 'Settings' };
-const AUDIT_NOUN = { items: 'Item', units: 'Serial / kit number', unit_components: 'Kit component expiry', kit_components: 'Kit component', certifications: 'Certificate', locations: 'Location', departments: 'Service line', categories: 'Category', profiles: 'Person', memberships: 'Service-line membership', jobs: 'Job ticket', job_lines: 'Job ticket line', change_batches: 'Request', counts: 'Monthly count', app_settings: 'Setting' };
+const AUDIT_NOUN = { items: 'Item', units: 'Serial / kit number', unit_components: 'Kit component expiry', kit_components: 'Kit component', certifications: 'Certificate', locations: 'Location', departments: 'Service line', categories: 'Category', profiles: 'Person', memberships: 'Service-line membership', jobs: 'Materials request', job_lines: 'Materials request line', job_sections: 'Materials request line approval', change_batches: 'Request', counts: 'Monthly count', app_settings: 'Setting' };
 const FIELD_LABEL = { profile_id: 'Person', name: 'Description', code: 'Item code', min_qty: 'Reorder at', max_qty: 'Restock up to', item_type: 'Type', unit: 'Unit', supplier: 'Supplier', notes: 'Notes', active: 'Active', role: 'Access',
   state: 'Status', department_id: 'Service line', category_id: 'Category', is_kit: 'Redress kit', serial_no: 'Serial / kit no.', lot_no: 'Lot', expiry_on: 'Expiry', due_on: 'Due', cert_no: 'Certificate no.',
-  title: 'Job', status: 'Status', main_admin: 'Main admin', backup_admin: 'Backup admin', full_name: 'Name', value: 'Value', qty: 'Qty', location_id: 'Location', decision_note: 'Note', kind: 'Kind', superseded: 'Superseded' };
-const AUDIT_SKIP = ['id', 'created_at', 'updated_at', 'import_ref', 'payload', 'created_by', 'decided_by', 'submitted_by', 'decided_at', 'submitted_at', 'verified_at', 'dispatched_at', 'closed_at', 'started_at', 'checkout_id', 'sort', 'apps'];
+  title: 'Job', status: 'Status', requester_name: 'Requester', requester_id: 'Requester', main_admin: 'Main admin', backup_admin: 'Backup admin', full_name: 'Name', value: 'Value', qty: 'Qty', location_id: 'Location', decision_note: 'Note', kind: 'Kind', superseded: 'Superseded' };
+const AUDIT_SKIP = ['requester_id', 'id', 'created_at', 'updated_at', 'import_ref', 'payload', 'created_by', 'decided_by', 'submitted_by', 'decided_at', 'submitted_at', 'verified_at', 'dispatched_at', 'closed_at', 'started_at', 'checkout_id', 'sort', 'apps'];
 const auditVal = (k, v) => v === null || v === undefined || v === '' ? '—' : k === 'department_id' ? lineShort(v) : k === 'location_id' || k === 'base_location_id' ? locName(v)
   : k === 'category_id' ? (S.cats.find(c => c.id === +v)?.name || v) : ['main_admin', 'backup_admin', 'profile_id'].includes(k) ? personName(v, v) : k === 'role' ? (ROLE_LABEL[v] || v)
   : typeof v === 'boolean' ? (v ? 'Yes' : 'No') : typeof v === 'object' ? JSON.stringify(v) : String(v);
@@ -294,7 +300,7 @@ ROUTES.audit = {
       const itemId = r.table_name === 'items' ? +r.record_id : data.item_id;
       const subject = r.summary || (itemId && its.get(+itemId)?.name) || (r.table_name === 'memberships' ? `${personName(data.profile_id, '')} · ${lineShort(data.department_id)}` : '') || `#${r.record_id}`;
       const verb = { insert: 'added', update: 'changed', delete: 'removed' }[r.action];
-      return { at: r.at, who: r.user_name, line: r.department_id, what: `${AUDIT_NOUN[r.table_name] || r.table_name} ${verb}`, subject, changes, link: itemId ? `#/item/${itemId}` : r.table_name === 'jobs' ? `#/job/${r.record_id}` : '',
+      return { at: r.at, who: r.user_name, line: r.department_id, what: `${AUDIT_NOUN[r.table_name] || r.table_name} ${verb}`, subject, changes, link: itemId ? `#/item/${itemId}` : r.table_name === 'jobs' ? `#/job/${r.record_id}` : (r.table_name === 'job_sections' || r.table_name === 'job_lines') && data.job_id ? `#/job/${data.job_id}` : '',
         detail: r.action !== 'update' ? Object.entries(data).filter(([k, v]) => !AUDIT_SKIP.includes(k) && v !== null && v !== '').slice(0, 6).map(([k, v]) => `${FIELD_LABEL[k] || k}: ${auditVal(k, v)}`).join(' · ') : '' };
     });
     const m = AUD.moves.map(x => ({ at: x.created_at, who: x.user_name, line: x.items?.department_id, what: 'Stock movement', subject: `${x.items?.code || ''} ${x.items?.name || ''}`.trim(), changes: [], link: `#/item/${x.item_id}`, detail: describeMove(x) + (x.notes ? ' · ' + x.notes : '') }));
@@ -422,3 +428,22 @@ ROUTES.more = {
   },
   bind(main) { $('#out2', main).onclick = e => { e.preventDefault(); sb.auth.signOut(); }; }
 };
+
+function fixEmail(p) {
+  const dom = CFG.SIGNUP_DOMAIN || 'gankcoenergy.com';
+  return modal({
+    title: `Move ${p.full_name || p.email} to a GANKCO email`, submit: null, cancel: 'Close', wide: true,
+    sub: 'Type their company email, then copy the generated code into Supabase → SQL Editor → New query and press Run. Their password, history and access stay the same; they sign in with the new email from then on.',
+    body: `<label class="f">Company email<input type="email" id="fx-new" placeholder="name@${esc(dom)}"></label>
+      <label class="f">Code to run in Supabase<textarea id="fx-sql" rows="7" readonly style="font-family:monospace;font-size:13px"></textarea></label>
+      <button type="button" class="btn small" id="fx-copy">Copy code</button>`,
+    onOpen: d => {
+      const upd = () => {
+        const n = $('#fx-new', d).value.trim().toLowerCase().replace(/'/g, '');
+        $('#fx-sql', d).value = n ? `-- Move ${p.email} to ${n}\nupdate auth.users set email = '${n}', email_change = '' where id = '${p.id}';\nupdate auth.identities set identity_data = jsonb_set(identity_data, '{email}', '"${n}"') where user_id = '${p.id}' and provider = 'email';\nupdate public.profiles set email = '${n}' where id = '${p.id}';` : '';
+      };
+      $('#fx-new', d).oninput = upd;
+      $('#fx-copy', d).onclick = async () => { const t = $('#fx-sql', d).value; if (!t) return toast('Type the new email first.', true); try { await navigator.clipboard.writeText(t); toast('Copied'); } catch (e) { $('#fx-sql', d).select(); } };
+    }
+  });
+}

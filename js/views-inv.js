@@ -78,9 +78,9 @@ ROUTES.dashboard = {
       return day >= open ? chip('muted', 'Not started') : chip('muted', `Opens ${ord(open)}`);
     };
     return `<section class="hero"><img class="bgmark" src="brand/mark.png" alt="">
-      <div><div class="motto">${esc(L ? lineName(L) : CFG.MOTTO || '')}</div><h1>${first ? `Good to see you, ${esc(first)}` : 'Overview'}</h1>
+      <div><div class="motto">${esc(L ? lineName(L) : CFG.TAGLINE || '')}</div><h1>${first ? `Good to see you, ${esc(first)}` : 'Overview'}</h1>
       <div class="sub">${plural(active.length, 'item')} · ${co.length} out on jobs right now</div></div>
-      <div class="actions"><a class="btn" href="#/scan">${ico('scan')}Scan an item</a><a class="btn tagbtn" href="#/jobs">${ico('truck')}New job ticket</a></div></section>
+      <div class="actions"><a class="btn" href="#/scan">${ico('scan')}Scan an item</a><a class="btn tagbtn" href="#/jobs">${ico('truck')}Materials requests</a></div></section>
       ${lineChips()}
       <div class="board b8">
         ${k('#/inventory', active.length, 'Items tracked')}
@@ -209,6 +209,7 @@ ROUTES.inventory = {
     const canMove = selItems.length && selItems.every(i => canAct(i.department_id));
     const canEdit = selItems.length && selItems.every(i => canAdmin(i.department_id));
     b.innerHTML = n ? `<div class="bulkbar"><b>${n} selected</b>
+      <button class="btn small tagbtn" id="b-mr">${ico('truck')}Add to materials request</button>
       ${canMove ? `<button class="btn small" id="b-move">${ico('move')}Move location</button>` : ''}
       ${isAdmin() ? `<button class="btn small" id="b-labels">${ico('print')}Print labels</button>` : ''}
       ${canEdit ? '<button class="btn small" id="b-edit">Edit details</button>' : ''}
@@ -218,6 +219,7 @@ ROUTES.inventory = {
     const l = $('#b-labels', b); if (l) l.onclick = () => { sessionStorage.setItem('labels', JSON.stringify([...S.inv.sel])); go('#/labels'); };
     const e = $('#b-edit', b); if (e) e.onclick = () => bulkEdit([...S.inv.sel]);
     const m = $('#b-move', b); if (m) m.onclick = () => bulkMove(selItems);
+    $('#b-mr', b).onclick = () => addSelectedToRequest(selItems);
   },
   drawEditBar(main) {
     const f = S.inv; const bar = $('#editbar', main); if (!bar) return;
@@ -561,7 +563,7 @@ const ACTIONS = {
     const opts = stockLocOptions(stock, ['available', 'reserved']);
     if (!opts) return toast('Nothing in store to check out. Return or receive stock first.', true);
     return modal({
-      title: 'Check out', sub: `${esc(it.code || '')} ${esc(it.name)}. For several items going to one job, use a job ticket.`, submit: 'Check out',
+      title: 'Check out', sub: `${esc(it.code || '')} ${esc(it.name)}. For several items going to one job, use a materials request.`, submit: 'Check out',
       body: `<div class="row2"><label class="f">From<select name="loc" id="m-loc">${opts}</select></label>
         <label class="f">Take from<select name="st" id="m-st">${opt('available', 'Available')}${opt('reserved', 'Reserved')}</select></label></div>
         <label class="f">Quantity<span class="hint" id="m-have"></span><input type="number" name="qty" step="any" min="0" value="1" required></label>
@@ -707,7 +709,7 @@ function actConsume(it, c) {
     title: 'Used or sold on the job', sub: `${esc(it.name)} · ${esc(c.job_ref)}. These don’t come back to the store.`, submit: 'Record',
     body: `<div class="row2"><label class="f">Quantity<span class="hint">${fq(c.open_qty)} still out</span><input type="number" name="qty" step="any" min="0" max="${c.open_qty}" value="${c.open_qty}" required></label>
       <label class="f">What happened<select name="kind">${opt('issue', 'Used up on the job')}${opt('sale', 'Sold to the client (left in the well)', it.item_type === 'sales' ? 'sale' : '')}</select></label></div>
-      <label class="f">Reference<input type="text" name="ref" placeholder="Field ticket / invoice no. (optional)"></label>
+      <label class="f">Reference<input type="text" name="ref" placeholder="Invoice or reference no. (optional)"></label>
       <label class="f">Notes<textarea name="notes"></textarea></label>`,
     onSubmit: async x => {
       await q(sb.rpc('consume_checkout', { p_checkout: c.id, p_qty: num(x.qty), p_kind: x.kind, p_ref: x.ref || null, p_notes: x.notes || null }));
