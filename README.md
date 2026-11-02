@@ -1,4 +1,39 @@
-# GANKCO Nest: version 2.2 update
+# GANKCO Nest: version 2.3 update
+
+*Built to support engineered solutions.*
+
+## Install 2.3 (about 5 minutes)
+
+1. **Supabase → SQL Editor → New query:** paste all of **`4-nest-v2.3-upgrade.sql`** and press **Run**. Wait for **Success**. It's safe to run again.
+2. **GitHub:** unzip **`gankco-nest-v2.3.zip`** and upload everything from the folder into your `inventory` repository (**Add file → Upload files**), then commit. Keep the `CNAME` file.
+3. After 1–2 minutes, anyone with Nest open sees **"A new version is available: Reload"**.
+
+## First things to do
+
+1. **Team page:** set everyone's **job title** (use **Set** in the Job title column). It's printed under their name when they sign.
+2. **Everyone:** go to **My account → Upload signature**. Sign on plain white paper with a dark pen, then take a straight photo in good light or scan it. Nest removes the white background and shows a preview before saving.
+
+## What's new in 2.3
+
+- **Printer-friendly PDFs (Design A):** white page, colour logo, one thin orange line, light grey table headers. Statuses are bold coloured text. A category heading never gets stranded at the bottom of a page. **Excel downloads** use the same light header.
+- **Signatures on documents.** Each box shows the signature, name, job title and "Signed in GANKCO Nest · date and time". Boxes nobody signed stay blank for a pen.
+  - **Monthly count:** "Counted by" (who submitted it) and "Approved by" (the admin who approved it).
+  - **Load-out Manifest:** "Issued by" for each service line's admin, and the requester's box once they press **Confirm receipt**.
+  - **Inventory list, certificate and kit lists, plain report downloads:** "Prepared by" is whoever downloads them.
+- **Confirm receipt:** once every line on a materials request is issued or rejected, the requester sees **Confirm receipt** (and a bell reminder). It signs the Requester box.
+- **Report sign-off (Sign-offs in the menu):**
+  - On **Reports**, choose the line and period, then **Sign & submit**. The figures are frozen at that moment.
+  - The line's admin gets a bell alert and either **signs** or **returns** it with a comment. The preparer can't review their own report; if no other admin is in the line, it goes straight to the Super Admin.
+  - The Super Admin **signs & approves**, and the report is **final**. Until then its PDF carries a light "DRAFT" mark.
+  - If it's returned, the preparer presses **Update figures**, checks the report and presses **Sign & resubmit**. It starts again from the line admin.
+  - Reports for all lines go preparer → Super Admin. Comparisons can't be signed off. Each period and line is signed off once (it can be withdrawn before it's final).
+- **Who sees signatures:** active users see them only inside signed documents. Only the owner can upload or replace their own; the Super Admin can remove anyone's from the Team page. Documents already signed keep the signature they were signed with.
+- Every signature is recorded in the **Audit log**.
+- **Item codes are easier to read:** light orange tag with dark orange text across Nest. Printed QR labels use bold black text in a thin black outline on white, so they print sharply on any printer.
+
+---
+
+# Earlier: version 2.2 update
 
 *Built to support engineered solutions.*
 

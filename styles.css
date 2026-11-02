@@ -101,9 +101,10 @@ input:focus, select:focus, textarea:focus { outline: 2px solid rgba(232,85,44,.4
 .check input { width: 18px; height: 18px; }
 
 /* ---------- Tool tag (item code) ---------- */
-.tag { display: inline-flex; align-items: center; gap: 6px; font-family: var(--cond); font-weight: 700; font-size: 14px; letter-spacing: .4px; line-height: 1; padding: 4px 8px 4px 6px; background: var(--flame); color: #fff; border-radius: 3px; white-space: nowrap; position: relative; text-shadow: 0 1px 0 rgba(120,30,0,.35); }
-.tag::before { content: ''; width: 6px; height: 6px; border-radius: 50%; background: #fff; box-shadow: inset 0 0 0 1.5px rgba(120,30,0,.45); flex: none; }
-.tag.none { background: #E4E5E7; color: var(--muted); text-shadow: none; }
+.tag { display: inline-flex; align-items: center; gap: 6px; font-family: var(--cond); font-weight: 700; font-size: 14px; letter-spacing: .4px; line-height: 1; padding: 4px 8px 4px 6px; background: #FDEDE6; color: #8F2400; border: 1px solid #F6CDBC; border-radius: 4px; white-space: nowrap; position: relative; }
+.tag::before { content: ''; width: 6px; height: 6px; border-radius: 50%; background: var(--flame); flex: none; }
+.tag.none { background: #F1F2F4; color: var(--muted); border-color: #E1E3E6; }
+.tag.none::before { background: #B4B6BA; }
 .tag.big { font-size: 22px; padding: 7px 14px 7px 10px; }
 .tag.big::before { width: 10px; height: 10px; }
 
@@ -254,7 +255,8 @@ dialog.modal::backdrop { background: rgba(20,30,38,.55); }
 .lbl { background: #fff; border: 1px dashed #AAB0B6; border-radius: 6px; padding: 10px; display: grid; grid-template-columns: 84px 1fr; gap: 10px; align-items: center; break-inside: avoid; page-break-inside: avoid; position: relative; }
 .lbl .lbl-logo { height: 16px; width: auto; display: block; margin-top: 6px; }
 .lbl > svg { width: 84px; height: 84px; }
-.lbl .tag { font-size: 15px; }
+.lbl .tag { font-size: 15px; background: #fff; color: #000; border: 1.2px solid #000; }
+.lbl .tag::before { background: #000; }
 .lbl .nm { font-size: 12px; line-height: 1.25; margin-top: 6px; max-height: 3.8em; overflow: hidden; }
 .lbl .org { font-size: 10.5px; color: var(--muted); margin-top: 3px; }
 
@@ -597,3 +599,22 @@ body.viewing-as .launcher { height: calc(100vh); }
 .l-foot { margin-top: auto; flex: none; padding: 14px 32px; }
 @media (max-width: 900px) { .launcher { height: auto; min-height: 100vh; } .tiles { grid-template-columns: 1fr; } }
 @media (max-height: 640px) and (min-width: 901px) { .launcher { height: auto; } }
+
+/* ---------- v2.3: signatures & sign-offs ---------- */
+.sigbox { height: 64px; min-width: 180px; max-width: 280px; border: 1px dashed var(--line, #d5d7da); border-radius: 8px; display: flex; align-items: center; justify-content: center; padding: 6px 10px; background: #fff; }
+.sigbox img { max-height: 100%; max-width: 100%; object-fit: contain; }
+.sigbox.big { height: 96px; max-width: 360px; }
+.sigbox.empty { border-style: dashed; background: transparent; }
+.sigpaper { background: #fff; color: #1c1d20; border: 1px solid #e3e4e7; border-radius: 10px; padding: 14px 16px 12px; max-width: 360px; }
+.sigpaper img { display: block; max-height: 70px; max-width: 240px; margin-bottom: -4px; }
+.sigpaper .sigline { border-top: 1px solid #1c1d20; margin-top: 8px; padding-top: 4px; }
+.sigpaper .signame { font-weight: 600; }
+.sigpaper .sub { color: #62666c; }
+.sigprev { margin-top: 12px; display: grid; gap: 8px; }
+.sosteps { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 14px; }
+.sostep { border: 1px solid var(--line, #e3e4e7); border-radius: 10px; padding: 12px 14px; display: grid; gap: 4px; align-content: start; }
+.sostep.done { border-color: #9fd2b5; }
+.sostep.now { border-color: var(--orange, #e8552c); box-shadow: 0 0 0 2px rgba(232, 85, 44, .12); }
+.sostep .sigbox { max-width: none; }
+.upper { text-transform: uppercase; letter-spacing: .06em; font-weight: 600; }
+table.t tr.sogrp td { background: rgba(127, 127, 127, .08); font-size: 14px; }

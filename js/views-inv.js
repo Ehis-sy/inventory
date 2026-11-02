@@ -367,7 +367,7 @@ async function exportInventory(kind, rows) {
         rows.filter(r => r.department_id === d.id).forEach(i => { if (i.category !== lastCat) { lastCat = i.category; rs.push({ code: i.category, _group: true }); } rs.push(mk(i)); });
         return { heading: d.name, headingNote: `${plural(rows.filter(r => r.department_id === d.id).length, 'item')}`, columns, rows: rs, cellStyle: tone };
       });
-      await brandPdf({ file: `GANKCO_Inventory_${localISO(0)}.pdf`, title, subtitle, kpis, sections, meta: [['Prepared by', S.profile.full_name || S.profile.email]] });
+      await brandPdf({ file: `GANKCO_Inventory_${localISO(0)}.pdf`, title, subtitle, kpis, sections, meta: [['Prepared by', S.profile.full_name || S.profile.email]], signatures: [mySignature('Prepared by', `${title} · ${subtitle}`)] });
     }
   } catch (e) { console.error(e); toast(niceError(e), true); }
 }

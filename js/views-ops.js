@@ -85,6 +85,8 @@ ROUTES.job = {
     this.ctx = { j, lines, secs, moves };
     const draft = j.status === 'draft';
     const canReturn = ['out', 'partial'].includes(j.status) && lines.some(l => l.checkouts && !l.checkouts.closed_at);
+    const isRequester = !S.viewAs && j.requester_id === S.profile.id;
+    const canConfirm = isRequester && ['out', 'closed'].includes(j.status) && !j.received_at && secs.some(s => s.state === 'issued');
     const tally = (l, type, st) => moves.filter(m => m.checkout_id === l.checkout_id && m.type === type && (!st || m.to_status === st)).reduce((a, m) => a + +m.qty, 0);
     const lineIds = [...new Set(lines.map(l => l.items?.department_id))].sort((a, b) => (S.depts.findIndex(d => d.id === a)) - (S.depts.findIndex(d => d.id === b)));
     const section = d => {
@@ -109,16 +111,18 @@ ROUTES.job = {
         <h1>${esc(j.title)}</h1>
         <div class="facts"><span>Requester: <b>${esc(j.requester_name || '—')}</b></span>${j.client ? `<span>Client: ${esc(j.client)}</span>` : ''}${j.field ? `<span>${esc(j.field)}</span>` : ''}<span>From ${esc(locName(j.base_location_id))}</span>
           ${j.expected_return ? `<span>Back by ${fd(j.expected_return)}</span>` : ''}</div>
-        <div class="facts sub">Created by ${esc(j.created_by_name || '')} ${fdt(j.created_at)}${j.submitted_at ? ` · submitted ${fdt(j.submitted_at)}` : ''}${j.closed_at ? ` · closed ${fdt(j.closed_at)}` : ''}</div></div></div>
+        <div class="facts sub">Created by ${esc(j.created_by_name || '')} ${fdt(j.created_at)}${j.submitted_at ? ` · submitted ${fdt(j.submitted_at)}` : ''}${j.received_at ? ` · receipt confirmed by ${esc(j.received_by_name || '')} ${fdt(j.received_at)}` : ''}${j.closed_at ? ` · closed ${fdt(j.closed_at)}` : ''}</div></div></div>
       <div class="actionrow">
         ${draft ? `<button class="btn tagbtn" id="add">${ico('plus')}Add items</button><button class="btn primary" id="submit" ${lines.length ? '' : 'disabled'}>${ico('check')}Submit request</button>
           <button class="btn" id="edit">Edit details</button>` : ''}
+        ${canConfirm ? `<button class="btn primary" id="rcpt">${ico('sign')}Confirm receipt</button>` : ''}
         ${canReturn ? `<button class="btn tagbtn" id="ret">${ico('out')}Record return</button>` : ''}
         ${secs.some(s => s.state === 'issued') ? `<button class="btn" id="manifest">${ico('pdf')}Load-out Manifest (PDF)</button>` : ''}
         ${draft ? '<button class="btn danger" id="cancel">Cancel request</button>' : ''}
       </div>
       ${draft ? `<div class="notice">Draft: nothing has left the store. Add the items, then press <b>Submit request</b>. Each service line’s admin approves and issues its own items${lineIds.some(d => canAdmin(d)) ? ' (items from lines you look after are issued as soon as you submit)' : ''}.</div>` : ''}
-      ${j.status === 'partial' ? `<div class="notice">Partly issued: some service lines have issued their items; others are still waiting for their admin.</div>` : ''}
+      ${j.status === 'partial' ? `<div class="notice">Partly issued: some service lines have issued their items; others are still waiting for their admin.${isRequester ? ' You can confirm receipt once every line has been issued or rejected.' : ''}</div>` : ''}
+      ${canConfirm ? `<div class="notice">You’re the requester. Check the items you were given against the list, then press <b>Confirm receipt</b> to sign the Requester box on the Load-out Manifest.</div>` : ''}
       ${lines.length ? lineIds.map(section).join('') : `<section class="panel"><div class="empty">No items yet. Press <b>Add items</b> and search or scan what’s needed. You can also tick items on the Inventory page and choose <b>Add to materials request</b>.</div></section>`}
       ${j.notes ? `<section class="panel"><div class="body">${esc(j.notes)}</div></section>` : ''}`;
   },
@@ -149,6 +153,15 @@ ROUTES.job = {
         onSubmit: async y => { await q(sb.rpc('reject_section', { p_job: j.id, p_dept: d, p_note: y.note })); toast('Rejected'); refresh(); } });
     });
     if (b('#ret')) b('#ret').onclick = () => jobReturn(j, lines);
+    if (b('#rcpt')) b('#rcpt').onclick = async () => {
+      if (!(await needSignature())) return;
+      const img = await mySigImage(); const iss = secs.filter(s => s.state === 'issued');
+      return modal({ title: `Confirm receipt: ${j.job_no}`, submit: 'Confirm & sign',
+        sub: `You confirm you received the items issued on this request for ${esc(j.title)}.`,
+        body: `<ul class="steps">${iss.map(s => `<li><b>${esc(lineName(s.department_id))}</b>: ${plural(lines.filter(l => l.items?.department_id === s.department_id).length, 'item')}, issued by ${esc(s.decided_by_name || '')}</li>`).join('')}</ul>
+          <div class="sigpaper mt">${img ? `<img src="${img.dataUrl}" alt="">` : ''}<div class="sigline"></div><div class="signame">${esc(S.profile.full_name || S.profile.email)}</div><div class="sub">${esc(S.profile.job_title || '')}</div><div class="sub">Requester</div></div>`,
+        onSubmit: async () => { await q(sb.rpc('confirm_receipt', { p_job: j.id })); toast('Receipt confirmed and signed'); refresh(); } });
+    };
     if (b('#manifest')) b('#manifest').onclick = () => jobManifest(j, lines, this.ctx.moves, secs);
     $$('[data-del]', main).forEach(x => x.onclick = async () => { try { await q(sb.from('job_lines').delete().eq('id', +x.dataset.del)); render({ quiet: true }); } catch (e) { toast(niceError(e), true); } });
   }
@@ -273,6 +286,7 @@ async function jobManifest(j, lines, moves = [], secs = []) {
           back: closed ? fq(tally(l, 'return')) : '', used: closed ? fq(tally(l, 'issue') + tally(l, 'sale')) : '', chk1: '', chk2: '' })) };
     });
     const pending = secs.filter(s => s.state === 'pending').length;
+    const [secEv, rcEv] = await Promise.all([signEvents('job_section', secs.map(s => s.id)), signEvents('job_receipt', j.id)]);
     await brandPdf({
       file: `${j.job_no}_Load-out_Manifest.pdf`, title: 'Load-out Manifest', subtitle: `${j.job_no} · ${j.title}`,
       meta: [['Request', j.job_no], ['Requester', j.requester_name || '—'], ['Client', j.client || '—'], ['Field / site', j.field || j.title], ['Leaves from', locName(j.base_location_id)],
@@ -280,7 +294,8 @@ async function jobManifest(j, lines, moves = [], secs = []) {
       kpis: [{ label: 'Lines', value: lines.length }, { label: 'Total pieces', value: fq(lines.reduce((a, l) => a + +l.qty, 0)) }, ...(pending ? [{ label: 'Lines not yet issued', value: pending, tone: 'warn' }] : [])],
       intro: `${j.title}${j.client ? ' for ' + j.client : ''}. Check every item against this list when loading and again on return.${pending ? ' Sections marked “waiting for approval” have not been issued and must not be loaded.' : ''}`,
       sections,
-      signatures: [{ label: 'Requester', name: j.requester_name || '' }, ...secs.filter(s => s.state === 'issued').map(s => ({ label: `Issued by (${lineShort(s.department_id)})`, name: s.decided_by_name || '', date: s.decided_at ? fd(s.decided_at) : '' })),
+      signatures: [sigFromEvent('Requester (received)', rcEv.find(e => e.step === 'received'), { name: j.requester_name || '', title: S.people[j.requester_id]?.job_title || '' }),
+        ...secs.filter(s => s.state === 'issued').map(s => sigFromEvent(`Issued by (${lineShort(s.department_id)})`, secEv.find(e => e.doc_id === s.id && e.step === 'issued'), { name: s.decided_by_name || '', title: S.people[s.decided_by]?.job_title || '', date: s.decided_at ? fd(s.decided_at) : '' })),
         { label: 'Driver' }, { label: 'Client representative' }],
     });
   } catch (e) { console.error(e); toast(niceError(e), true); }
@@ -477,6 +492,7 @@ async function countSheetPdf(c, lines) {
     toast('Preparing the PDF…');
     const verified = c.state === 'verified';
     const diffs = lines.filter(l => l.counted_qty !== null && +l.counted_qty !== +l.system_qty).length;
+    const cev = await signEvents('count', c.id); const e1 = cev.find(e => e.step === 'counted'), e2 = cev.find(e => e.step === 'approved');
     await brandPdf({
       file: `Count_${lineShort(c.department_id)}_${c.month.slice(0, 7)}.pdf`, title: verified ? 'Monthly Count Report' : 'Monthly Count Sheet', subtitle: `${lineName(c.department_id)} · ${fmonth(c.month)}`,
       meta: [['Service line', lineName(c.department_id)], ['Month', fmonth(c.month)], ['Status', c.state.replace('_', ' ')]],
@@ -486,7 +502,8 @@ async function countSheetPdf(c, lines) {
         rows: lines.map(l => ({ code: l.items?.code || '', name: l.items?.name, loc: locName(l.location_id), sys: fq(l.system_qty), cnt: l.counted_qty === null ? '' : fq(l.counted_qty),
           diff: l.counted_qty !== null && +l.counted_qty !== +l.system_qty ? ((l.counted_qty - l.system_qty > 0 ? '+' : '') + fq(l.counted_qty - l.system_qty)) : '', note: l.note || '', _d: l.counted_qty !== null && +l.counted_qty !== +l.system_qty })),
         cellStyle: (r, k) => k === 'diff' && r._d ? 'warn' : null }],
-      signatures: [{ label: 'Counted by', name: c.submitted_by_name || c.started_by_name || '', date: c.submitted_at ? fd(c.submitted_at) : '' }, { label: 'Verified by (admin)', name: c.verified_by_name || '', date: c.verified_at ? fd(c.verified_at) : '' }],
+      signatures: [['submitted', 'verified'].includes(c.state) ? sigFromEvent('Counted by', e1, { name: c.submitted_by_name || '', title: S.people[c.submitted_by]?.job_title || '', date: c.submitted_at ? fd(c.submitted_at) : '' }) : { label: 'Counted by' },
+        verified ? sigFromEvent('Approved by (line admin)', e2, { name: c.verified_by_name || '', date: c.verified_at ? fd(c.verified_at) : '' }) : { label: 'Approved by (line admin)' }],
     });
   } catch (e) { console.error(e); toast(niceError(e), true); }
 }
@@ -617,7 +634,7 @@ ROUTES.certs = {
       else await brandPdf({ file: `GANKCO_${kits ? 'Redress_Kits' : 'Certificates'}_${t}.pdf`, title, subtitle: `${S.line ? lineName(S.line) : 'All service lines'} · ${fd(t)}`,
         kpis: [{ label: 'Records', value: R.length }, { label: kits ? 'Expired' : 'Overdue', value: R.filter(r => ['Expired', 'Overdue'].includes(r.st)).length, tone: 'bad' }, { label: 'Due soon', value: R.filter(r => ['Expiring', 'Due soon'].includes(r.st)).length, tone: 'warn' }],
         sections: [{ heading: title, columns: [{ header: 'Item Code', dataKey: 'code', width: 44, bold: true }, { header: 'Description', dataKey: 'name' }, { header: kits ? 'Kit no.' : 'Kind', dataKey: 'kit', width: 24 }, { header: 'Line', dataKey: 'line', width: 22 },
-          { header: kits ? 'Expires first' : 'Cert no.', dataKey: 'comp', width: 36 }, { header: kits ? 'Expiry' : 'Due', dataKey: 'dueF', width: 24 }, { header: 'Status', dataKey: 'st', width: 20 }], rows: R.map(r => ({ ...r, dueF: r.due ? fd(r.due) : '' })), cellStyle: tone }] });
+          { header: kits ? 'Expires first' : 'Cert no.', dataKey: 'comp', width: 36 }, { header: kits ? 'Expiry' : 'Due', dataKey: 'dueF', width: 24 }, { header: 'Status', dataKey: 'st', width: 20 }], rows: R.map(r => ({ ...r, dueF: r.due ? fd(r.due) : '' })), cellStyle: tone }], signatures: [mySignature('Prepared by', title)] });
     };
     $('#xls', main).onclick = () => exp('xlsx').catch(e => toast(niceError(e), true));
     $('#pdf', main).onclick = () => exp('pdf').catch(e => toast(niceError(e), true));

@@ -140,6 +140,7 @@ const I = {
   users: '<circle cx="9" cy="8" r="3.5"/><path d="M2.5 20c.8-3.5 3.4-5.5 6.5-5.5s5.7 2 6.5 5.5"/><path d="M16 4.5a3.5 3.5 0 0 1 0 7M18 14.8c1.8.8 3 2.6 3.5 5.2"/>',
   label: '<path d="M3 12V4a1 1 0 0 1 1-1h8l9 9-9 9z"/><circle cx="7.5" cy="7.5" r="1.5"/>',
   user: '<circle cx="12" cy="8" r="4"/><path d="M4 21c1-4 4.2-6 8-6s7 2 8 6"/>',
+  sign: '<path d="M4 20h16"/><path d="M14.5 4.5l3 3L8 17H5v-3z"/>',
   audit: '<path d="M5 3h10l4 4v14H5z"/><path d="M15 3v4h4M8 12h8M8 16h5"/>',
   gear: '<circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/>',
   bell: '<path d="M6 8a6 6 0 1 1 12 0c0 7 3 8 3 8H3s3-1 3-8"/><path d="M10.3 21a1.9 1.9 0 0 0 3.4 0"/>',
@@ -193,7 +194,7 @@ async function loadLookups() {
     q(sb.from('departments').select('*').order('sort')),
     q(sb.from('categories').select('*').order('sort')),
     q(sb.from('locations').select('*').order('is_placeholder').order('name')),
-    q(sb.from('profiles').select('id,full_name,email,role,created_at,apps')),
+    q(sb.from('profiles').select('id,full_name,email,role,created_at,apps,job_title,signature_id')),
     q(sb.from('memberships').select('*')),
     q(sb.from('app_settings').select('*')),
   ]);
@@ -222,14 +223,15 @@ async function refreshAlerts() {
   if (!isActive()) return;
   try {
     const mine = myLineIds(); const t = localISO(0);
-    const [{ count: unreadReal }, appr, counts, kits, certs, overdue, mrs] = await Promise.all([
+    const [{ count: unreadReal }, appr, counts, kits, certs, overdue, mrs, sos] = await Promise.all([
       sb.from('notifications').select('id', { count: 'exact', head: true }).is('read_at', null),
       isAdmin() ? q(sb.from('change_batches').select('id,department_id').eq('state', 'pending')) : [],
       q(sb.from('counts').select('department_id,state').eq('month', monthISO())),
       q(sb.from('kit_status').select('unit_id,department_id,expiry_on').lte('expiry_on', localISO(+setting('kit_warn_days', 60))).not('expiry_on', 'is', null)),
       q(sb.from('certifications').select('id,item_id,items(department_id)').eq('superseded', false).not('due_on', 'is', null).lte('due_on', localISO(+setting('cert_warn_days', 30)))),
       q(sb.from('checkouts').select('id,items(department_id)').is('closed_at', null).lt('due_back', t)),
-      q(sb.from('jobs').select('id,job_no,status,requester_id,expected_return,job_sections(department_id,state)').in('status', ['submitted', 'partial', 'out'])),
+      q(sb.from('jobs').select('id,job_no,status,requester_id,expected_return,received_at,job_sections(department_id,state)').in('status', ['submitted', 'partial', 'out'])),
+      q(sb.from('report_signoffs').select('id,ref,status,department_id,prepared_by').in('status', ['review', 'approval', 'returned'])).catch(() => []),
     ]);
     const unread = S.viewAs ? 0 : unreadReal;
     const R = [];
@@ -242,6 +244,13 @@ async function refreshAlerts() {
     const meId = S.viewAs ? null : S.profile.id;
     const mine2 = mrs.filter(j => j.requester_id === meId && ['out', 'partial'].includes(j.status) && j.expected_return && j.expected_return < t);
     if (mine2.length) R.push({ kind: 'late', title: `${plural(mine2.length, 'of your materials requests', 'of your materials requests')} overdue for return`, link: mine2.length === 1 ? '#/job/' + mine2[0].id : '#/jobs?v=out' });
+    const rcpt = mrs.filter(j => j.requester_id === meId && j.status === 'out' && !j.received_at);
+    if (rcpt.length) R.push({ kind: 'issued', title: `Confirm receipt: ${rcpt.length === 1 ? rcpt[0].job_no : plural(rcpt.length, 'materials request')}`, body: 'Check the items you were issued, then confirm receipt to sign the Load-out Manifest.', link: rcpt.length === 1 ? '#/job/' + rcpt[0].id : '#/jobs?v=mine' });
+    const soWait = sos.filter(r => canSignReport(r));
+    S.pendingSO = soWait.length;
+    if (soWait.length) R.push({ kind: 'signoff', title: `${plural(soWait.length, 'report')} waiting for your signature`, link: soWait.length === 1 ? '#/signoff/' + soWait[0].id : '#/signoffs' });
+    const soBack = sos.filter(r => r.status === 'returned' && r.prepared_by === meId);
+    if (soBack.length) R.push({ kind: 'signoff', title: `${plural(soBack.length, 'report')} returned to you`, body: 'Update the figures and sign again.', link: soBack.length === 1 ? '#/signoff/' + soBack[0].id : '#/signoffs?v=returned' });
     const day = new Date().getDate(), open = +setting('count_open_day', 23), close = +setting('count_close_day', 26);
     const monthName = new Date().toLocaleDateString('en-GB', { month: 'long' });
     if (day >= open) {
@@ -271,7 +280,7 @@ async function openBell() {
   const notes = await q(sb.from('notifications').select('*').order('created_at', { ascending: false }).limit(40)).catch(() => []);
   const R = S.alerts.reminders;
   if (S.viewAs) notes.length = 0;
-  const icon = k => ({ issued: 'truck', approval: 'check', count: 'count', late: 'clock', kit: 'kit', cert: 'cert', low: 'box', faulty: 'box', missing: 'truck', decision: 'check', signup: 'users' }[k] || 'bell');
+  const icon = k => ({ issued: 'truck', approval: 'check', count: 'count', late: 'clock', kit: 'kit', cert: 'cert', low: 'box', faulty: 'box', missing: 'truck', decision: 'check', signup: 'users', signoff: 'sign' }[k] || 'bell');
   const li = (n, unread) => `<li class="${unread ? 'unread' : ''}"><a href="${esc(n.link || '#/dashboard')}" data-close><span class="ni ni-${esc(n.kind || 'x')}">${ico(icon(n.kind))}</span>
     <span><b>${esc(n.title)}</b>${n.body ? `<span class="sub">${esc(n.body)}</span>` : ''}${n.created_at ? `<span class="sub">${fdt(n.created_at)}</span>` : ''}</span></a></li>`;
   const d = document.createElement('div'); d.className = 'bellpanel'; d.setAttribute('role', 'dialog'); d.setAttribute('aria-label', 'Notifications');
@@ -296,7 +305,7 @@ function subscribe() {
   }, 900);
   try {
     S.channel = sb.channel('nest-live');
-    ['stock', 'checkouts', 'movements', 'change_batches', 'items', 'counts', 'jobs'].forEach(t =>
+    ['stock', 'checkouts', 'movements', 'change_batches', 'items', 'counts', 'jobs', 'job_sections', 'report_signoffs'].forEach(t =>
       S.channel.on('postgres_changes', { event: '*', schema: 'public', table: t }, onChange));
     S.channel.on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'notifications' }, () => refreshAlerts());
     S.channel.subscribe();
@@ -424,10 +433,18 @@ function renderPending() {
 }
 
 // ---------------------------------------------------------------- shell
+// Report sign-off: can I sign it at its current step?
+function canSignReport(r) {
+  const me = S.viewAs ? null : S.profile.id;
+  if (r.status === 'review') return role() === 'admin' && r.department_id != null && myLineIds().includes(r.department_id) && r.prepared_by !== me;
+  if (r.status === 'approval') return isSuper();
+  return false;
+}
+
 function navItems() {
   const main = [['dashboard', 'Overview', 'home'], ['inventory', 'Inventory', 'box'], ['scan', 'Scan', 'scan'],
     ['jobs', 'Materials requests', 'truck'], ['checkouts', 'Out on jobs', 'out'], ['count', 'Monthly count', 'count'],
-    ['certs', 'Certificates & kits', 'cert'], ['reports', 'Reports', 'chart'], ['activity', 'Activity', 'clock'],
+    ['certs', 'Certificates & kits', 'cert'], ['reports', 'Reports', 'chart'], ['signoffs', 'Sign-offs', 'sign'], ['activity', 'Activity', 'clock'],
     ['approvals', isAdmin() ? 'Approvals' : 'My requests', 'check']];
   const setup = isAdmin() ? [['locations', 'Locations', 'pin'], ['team', 'Team', 'users'], ['labels', 'Labels', 'label'], ['audit', 'Audit log', 'audit'],
     ...(isSuper() ? [['settings', 'Settings', 'gear']] : [])] : [];
