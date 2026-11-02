@@ -1,4 +1,4 @@
-# Equipment Inventory: setup guide
+# GANKCO Inventory Management: setup guide
 
 A web app for the team to track equipment: check-out and return, stock by location,
 certificates and maintenance, reorder alerts, QR labels and Excel export.

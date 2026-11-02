@@ -37,6 +37,8 @@ const CERT_KINDS = { certification: 'Certification', calibration: 'Calibration',
 const debounce = (fn, ms) => { let t; return (...a) => { clearTimeout(t); t = setTimeout(() => fn(...a), ms); }; };
 const tag = (code, cls = '') => code ? `<span class="tag ${cls}">${esc(code)}</span>` : `<span class="tag none ${cls}">No code</span>`;
 const chip = (cls, text) => `<span class="chip ${cls}">${esc(text)}</span>`;
+const ORG = CFG.ORG_SHORT || 'GANKCO';
+const wordmark = () => `<span class="wordmark"><span class="a">${esc(ORG.slice(0, 3))}</span><span class="b">${esc(ORG.slice(3))}</span></span>`;
 const itemUrl = id => `${location.origin}${location.pathname}#/item/${id}`;
 
 function niceError(e) {
@@ -187,10 +189,11 @@ async function boot() {
 
 function authShell(inner) {
   $('#app').innerHTML = `<div class="auth">
-    <div class="auth-art"><div class="string"></div>
-      <div class="bigtag"><span class="tag">${esc(CFG.ORG_SHORT || 'INV')}</span></div>
-      <div><h2 style="font-family:var(--cond);font-size:34px;margin:0 0 8px;line-height:1.05">${esc(CFG.APP_NAME)}</h2>
-      <p>Know where every tool is: in the store, on the truck or out on a well.</p></div></div>
+    <div class="auth-art">
+      <img class="eagle" src="brand/mark.png" alt="">
+      <div class="lockup">${wordmark()}<div class="sublock">INVENTORY MANAGEMENT</div>
+        ${CFG.MOTTO ? `<div class="motto">${esc(CFG.MOTTO)}</div>` : ''}</div>
+      <div class="foot"><span>${esc(CFG.COMPANY || '')}</span><span>Every tool, every well, every day.</span></div></div>
     <div class="auth-form">${inner}</div></div>`;
 }
 
@@ -254,8 +257,8 @@ function renderReset() {
 
 function renderPending() {
   const disabled = S.profile?.role === 'disabled';
-  authShell(`<div style="width:min(380px,100%)">
-    <h1 style="font-family:var(--cond);font-size:34px;margin:0 0 6px">${disabled ? 'Access removed' : 'Waiting for approval'}</h1>
+  authShell(`<div class="card">
+    <h1>${disabled ? 'Access removed' : 'Waiting for approval'}</h1>
     <p class="sub">${disabled ? 'An admin has turned off access for this account. Contact your admin if this is a mistake.'
       : 'Your account is set up. An admin needs to approve it before you can see the inventory. Ask your admin to open <b>Team</b> and approve you.'}</p>
     <p class="muted">Signed in as ${esc(S.session.user.email)}</p>
@@ -276,12 +279,12 @@ function shell() {
   const p = S.profile;
   $('#app').innerHTML = `<div class="shell">
     <aside class="side">
-      <a class="brand" href="#/"><span class="brand-mark"><span>${esc((CFG.ORG_SHORT || 'IN').slice(0, 3))}</span></span>
-        <span class="brand-name">${esc(CFG.APP_NAME)}<small>${esc(CFG.ORG_SHORT || '')} tool store</small></span></a>
+      <a class="brand" href="#/"><img src="brand/mark-96.png" alt="">
+        <span class="brand-name">${wordmark()}<small>Inventory Management</small></span></a>
       <nav class="nav">${NAV.map(([r, l, i]) => `<a href="#/${r}" data-r="${r}">${ico(i)}${l}${r === 'approvals' ? `<span class="count" id="pendingCount" ${S.pending ? '' : 'hidden'}>${S.pending}</span>` : ''}</a>`).join('')}
         <div class="nav-group">Setup</div>
         ${NAV2.map(([r, l, i]) => `<a href="#/${r}" data-r="${r}">${ico(i)}${l}</a>`).join('')}</nav>
-      <div class="side-foot"><div class="who">${esc(p.full_name || p.email)}</div><div class="role">${p.role === 'admin' ? 'Admin' : 'Staff'}</div>
+      <div class="side-foot">${CFG.MOTTO ? `<div class="motto">${esc(CFG.MOTTO)}</div>` : ''}<div class="who">${esc(p.full_name || p.email)}</div><div class="role">${p.role === 'admin' ? 'Admin' : 'Staff'}</div>
         <a href="#" id="signout">Sign out</a></div>
     </aside>
     <main id="main"></main>
@@ -316,7 +319,7 @@ async function render(opts = {}) {
   try {
     const html = await view.load(parts, params);
     if (seq !== renderSeq) return;
-    main.innerHTML = html + `<div class="pagefoot">${esc(CFG.APP_NAME)} · v${esc(CFG.VERSION || '1.0')}</div>`;
+    main.innerHTML = html + `<div class="pagefoot">${esc(CFG.APP_NAME)}${CFG.MOTTO ? ' · ' + esc(CFG.MOTTO) : ''} · v${esc(CFG.VERSION || '1.0')}</div>`;
     view.bind && view.bind(main, parts, params);
     if (opts.quiet) window.scrollTo(0, y); else window.scrollTo(0, 0);
   } catch (e) {
@@ -388,8 +391,10 @@ const viewDashboard = {
     const first = (S.profile.full_name || '').split(' ')[0];
     const k = (href, n, l, cls = '') => `<a href="${href}" class="${n ? cls : ''}"><div class="n">${n}</div><div class="l">${l}</div></a>`;
     const li = (href, main, sub, end = '') => `<li><a class="main" href="${href}"><div class="name">${main}</div><div class="sub">${sub}</div></a><div class="end">${end}</div></li>`;
-    return topbar(first ? `Good to see you, ${esc(first)}` : 'Overview', `${active.length} items across ${S.depts.length} departments`,
-      `<a class="btn" href="#/scan">${ico('scan')}Scan an item</a><a class="btn primary" href="#/inventory">${ico('box')}Open inventory</a>`) +
+    return `<section class="hero"><img class="bgmark" src="brand/mark.png" alt="">
+      <div>${CFG.MOTTO ? `<div class="motto">${esc(CFG.MOTTO)}</div>` : ''}<h1>${first ? `Good to see you, ${esc(first)}` : 'Overview'}</h1>
+      <div class="sub">${active.length} items across ${S.depts.length} departments · ${cos.length} out on jobs right now</div></div>
+      <div class="actions"><a class="btn" href="#/scan">${ico('scan')}Scan an item</a><a class="btn tagbtn" href="#/inventory">${ico('box')}Open inventory</a></div></section>` +
       `<div class="board">
         ${k('#/inventory', active.length, 'Items tracked')}
         ${k('#/checkouts', cos.length, 'Out on jobs')}
@@ -1066,7 +1071,7 @@ const viewLabels = {
     const its = (await items()).filter(i => ids.includes(i.id));
     return topbar('Print labels', its.length ? `${its.length} label${its.length > 1 ? 's' : ''}. Scanning a label with any phone camera opens the item.` : '',
       its.length ? `<button class="btn primary" id="print">${ico('print')}Print</button>` : '') +
-      (its.length ? `<div class="labels">${its.map(i => `<div class="lbl">${qrSvg(itemUrl(i.id), 3)}<div>${tag(i.code)}<div class="nm">${esc(i.name)}</div><div class="org">${esc(CFG.ORG_SHORT || '')} ${esc(i.department || '')}</div></div></div>`).join('')}</div>`
+      (its.length ? `<div class="labels">${its.map(i => `<div class="lbl">${qrSvg(itemUrl(i.id), 3)}<div>${tag(i.code)}<div class="nm">${esc(i.name)}</div><div class="org">${esc(i.department || '')}</div><img class="lbl-logo" src="brand/logo-full.png" alt="${esc(ORG)}"></div></div>`).join('')}</div>`
         : `<div class="panel"><div class="empty">No items picked. In Inventory, tick the items you want labels for and choose Print labels.</div></div>`);
   },
   bind(main) { const p = $('#print', main); if (p) p.onclick = () => window.print(); }
