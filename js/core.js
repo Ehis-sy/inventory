@@ -43,7 +43,7 @@ const STATUS = { available: 'Available', reserved: 'Reserved', in_transit: 'In t
 const TYPES = { equipment: 'Equipment (returns)', consumable: 'Consumable', sales: 'Sales item' };
 const TYPE_SHORT = { equipment: 'Equipment', consumable: 'Consumable', sales: 'Sales' };
 const CERT_KINDS = { certification: 'Certification', calibration: 'Calibration', maintenance: 'Maintenance', inspection: 'Inspection', pressure_test: 'Pressure test' };
-const ROLE_LABEL = { pending: 'Waiting for approval', staff: 'Staff', admin: 'Admin', superadmin: 'Super Admin', disabled: 'No access' };
+const ROLE_LABEL = { pending: 'Waiting for approval', staff: 'Staff', admin: 'Admin', superadmin: 'Super Admin', management: 'Management', disabled: 'No access' };
 
 // roles & service lines
 const realRole = () => S.profile?.role;
@@ -51,7 +51,8 @@ const realSuper = () => realRole() === 'superadmin';
 const role = () => (S.viewAs && realSuper()) ? S.viewAs.role : realRole();
 const isSuper = () => role() === 'superadmin';
 const isAdmin = () => ['admin', 'superadmin'].includes(role());
-const isActive = () => ['staff', 'admin', 'superadmin'].includes(role());
+const isActive = () => ['staff', 'admin', 'superadmin', 'management'].includes(role());
+const isMgmt = () => role() === 'management';
 const myLineIds = () => isSuper() ? S.depts.map(d => d.id) : (S.viewAs && realSuper()) ? (S.viewAs.lines || []).map(Number) : S.members.filter(m => m.profile_id === S.profile?.id).map(m => m.department_id);
 const inLine = d => myLineIds().includes(+d);
 const canAct = d => isSuper() || role() === 'admin' || (role() === 'staff' && inLine(d));
@@ -66,25 +67,27 @@ const setting = (k, d) => S.settings[k] ?? d;
 
 // "View as" is read-only: block every write while it's on
 const VIEW_MSG = 'You’re viewing Nest as another role, so changes are switched off. Press Exit on the orange bar to make changes.';
+const MGMT_MSG = 'Management access is view-only, so changes are switched off.';
+const readOnly = () => !!S.viewAs || realRole() === 'management';
 (() => {
-  const READ_RPC = new Set(['month_totals', 'period_flows', 'mark_notifications_read']);
-  const blocked = () => { const p = new Proxy(function () { }, { get: (t, k) => k === 'then' ? (res => res({ data: null, error: { message: VIEW_MSG } })) : () => p, apply: () => p }); return p; };
+  const READ_RPC = new Set(['month_totals', 'period_flows', 'mark_notifications_read', 'log_signed_export']);
+  const blocked = () => { const msg = S.viewAs ? VIEW_MSG : MGMT_MSG; const p = new Proxy(function () { }, { get: (t, k) => k === 'then' ? (res => res({ data: null, error: { message: msg } })) : () => p, apply: () => p }); return p; };
   const _rpc = sb.rpc.bind(sb), _from = sb.from.bind(sb);
-  sb.rpc = (fn, args, opts) => (S.viewAs && !READ_RPC.has(fn)) ? blocked() : _rpc(fn, args, opts);
-  sb.from = t => { const b = _from(t); if (S.viewAs) ['insert', 'update', 'delete', 'upsert'].forEach(m => { b[m] = () => blocked(); }); return b; };
+  sb.rpc = (fn, args, opts) => (readOnly() && !READ_RPC.has(fn) && !(fn === 'log_signed_export' && S.viewAs)) ? blocked() : _rpc(fn, args, opts);
+  sb.from = t => { const b = _from(t); if (readOnly()) ['insert', 'update', 'delete', 'upsert'].forEach(m => { b[m] = () => blocked(); }); return b; };
 })();
 function setViewAs(v) { S.viewAs = v; try { v ? sessionStorage.setItem('nest.viewAs', JSON.stringify(v)) : sessionStorage.removeItem('nest.viewAs'); } catch (e) { } S.shellReady = false; S.inv.edit = false; S.inv.changes.clear(); refreshAlerts(); render(); }
 function viewAsBar() {
   if (!(S.viewAs && realSuper())) return '';
-  return `<div class="viewas-bar">Viewing as <b>${esc(ROLE_LABEL[S.viewAs.role])}</b>${S.viewAs.role !== 'superadmin' ? ' · ' + esc((S.viewAs.lines || []).map(lineShort).join(', ') || 'no service line') : ''} · read only <button class="btn small" id="va-exit">Exit</button></div>`;
+  return `<div class="viewas-bar">Viewing as <b>${esc(ROLE_LABEL[S.viewAs.role])}</b>${!['superadmin', 'management'].includes(S.viewAs.role) ? ' · ' + esc((S.viewAs.lines || []).map(lineShort).join(', ') || 'no service line') : ''} · read only <button class="btn small" id="va-exit">Exit</button></div>`;
 }
 function bindViewAs() { const x = $('#va-exit'); if (x) x.onclick = () => setViewAs(null); }
 function openViewAs() {
   return modal({
     title: 'View Nest as…', sub: 'See exactly what a role sees: menu, what can be edited, approvals and reminders. Read only: nothing can be changed while viewing.', submit: 'Start viewing',
-    body: `<label class="f">Role<select name="role">${opt('staff', 'Staff')}${opt('admin', 'Admin')}</select></label>
-      <div class="f">Service line(s)${S.depts.map(d => `<label class="check"><input type="checkbox" name="l${d.id}"> ${esc(d.name)}</label>`).join('')}</div>`,
-    onSubmit: async x => { const lines = S.depts.filter(d => x['l' + d.id]).map(d => d.id); if (!lines.length) throw new Error('Tick at least one service line.'); setTimeout(() => setViewAs({ role: x.role, lines }), 0); }
+    body: `<label class="f">Role<select name="role">${opt('staff', 'Staff')}${opt('admin', 'Admin')}${opt('management', 'Management (view-only)')}</select></label>
+      <div class="f">Service line(s)<span class="hint">Not needed for Management.</span>${S.depts.map(d => `<label class="check"><input type="checkbox" name="l${d.id}"> ${esc(d.name)}</label>`).join('')}</div>`,
+    onSubmit: async x => { const lines = S.depts.filter(d => x['l' + d.id]).map(d => d.id); if (!lines.length && x.role !== 'management') throw new Error('Tick at least one service line.'); setTimeout(() => setViewAs({ role: x.role, lines }), 0); }
   });
 }
 function niceError(e) {
@@ -140,6 +143,7 @@ const I = {
   users: '<circle cx="9" cy="8" r="3.5"/><path d="M2.5 20c.8-3.5 3.4-5.5 6.5-5.5s5.7 2 6.5 5.5"/><path d="M16 4.5a3.5 3.5 0 0 1 0 7M18 14.8c1.8.8 3 2.6 3.5 5.2"/>',
   label: '<path d="M3 12V4a1 1 0 0 1 1-1h8l9 9-9 9z"/><circle cx="7.5" cy="7.5" r="1.5"/>',
   user: '<circle cx="12" cy="8" r="4"/><path d="M4 21c1-4 4.2-6 8-6s7 2 8 6"/>',
+  plan: '<rect x="3" y="5" width="18" height="16" rx="2"/><path d="M3 10h18M8 3v4M16 3v4M8 15l2 2 4-4"/>',
   sign: '<path d="M4 20h16"/><path d="M14.5 4.5l3 3L8 17H5v-3z"/>',
   audit: '<path d="M5 3h10l4 4v14H5z"/><path d="M15 3v4h4M8 12h8M8 16h5"/>',
   gear: '<circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/>',
@@ -215,7 +219,7 @@ async function stockRows(force = false) {
 function stockOf(itemId, locId, status = 'available') {
   return +((S.stock || []).find(s => s.item_id === itemId && s.location_id === +locId && s.status === status)?.qty || 0);
 }
-function invalidate() { S.items = null; S.stock = null; }
+function invalidate() { S.items = null; S.stock = null; S.plan = null; }
 const lineFilter = arr => S.line ? arr.filter(x => x.department_id === +S.line) : arr;
 
 // ---------------------------------------------------------------- alerts (bell)
@@ -305,7 +309,7 @@ function subscribe() {
   }, 900);
   try {
     S.channel = sb.channel('nest-live');
-    ['stock', 'checkouts', 'movements', 'change_batches', 'items', 'counts', 'jobs', 'job_sections', 'report_signoffs'].forEach(t =>
+    ['stock', 'checkouts', 'movements', 'change_batches', 'items', 'counts', 'jobs', 'job_sections', 'report_signoffs', 'plan_jobs'].forEach(t =>
       S.channel.on('postgres_changes', { event: '*', schema: 'public', table: t }, onChange));
     S.channel.on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'notifications' }, () => refreshAlerts());
     S.channel.subscribe();
@@ -443,9 +447,10 @@ function canSignReport(r) {
 
 function navItems() {
   const main = [['dashboard', 'Overview', 'home'], ['inventory', 'Inventory', 'box'], ['scan', 'Scan', 'scan'],
-    ['jobs', 'Materials requests', 'truck'], ['checkouts', 'Out on jobs', 'out'], ['count', 'Monthly count', 'count'],
+    ['jobs', 'Materials requests', 'truck'], ['planner', 'Job planner', 'plan'], ['checkouts', 'Out on jobs', 'out'], ['count', 'Monthly count', 'count'],
     ['certs', 'Certificates & kits', 'cert'], ['reports', 'Reports', 'chart'], ['signoffs', 'Sign-offs', 'sign'], ['activity', 'Activity', 'clock'],
     ['approvals', isAdmin() ? 'Approvals' : 'My requests', 'check']];
+  if (isMgmt()) return { main: main.filter(([r]) => ['dashboard', 'inventory', 'planner', 'reports', 'signoffs'].includes(r)), setup: [] };
   const setup = isAdmin() ? [['locations', 'Locations', 'pin'], ['team', 'Team', 'users'], ['labels', 'Labels', 'label'], ['audit', 'Audit log', 'audit'],
     ...(isSuper() ? [['settings', 'Settings', 'gear']] : [])] : [];
   return { main, setup };
@@ -463,7 +468,7 @@ function shell() {
       <nav class="nav">${main.map(link).join('')}
         ${setup.length ? `<div class="nav-group">Setup</div>${setup.map(link).join('')}` : ''}</nav>
       <div class="side-foot">${CFG.TAGLINE ? `<div class="motto">${esc(CFG.TAGLINE)}</div>` : ''}
-        <a class="who" href="#/account">${esc(p.full_name || p.email)}</a><div class="role">${ROLE_LABEL[role()]}${!isSuper() ? ' · ' + esc(myLineIds().map(lineShort).join(', ') || 'no service line') : ''}</div>
+        <a class="who" href="#/account">${esc(p.full_name || p.email)}</a><div class="role">${ROLE_LABEL[role()]}${!isSuper() && !isMgmt() ? ' · ' + esc(myLineIds().map(lineShort).join(', ') || 'no service line') : ''}</div>
         ${realSuper() ? `<button class="btn small viewas-btn" id="viewas">${S.viewAs ? 'Change view' : 'View as…'}</button>` : ''}
         <a href="#" id="signout">Sign out</a></div>
     </aside>${viewAsBar()}

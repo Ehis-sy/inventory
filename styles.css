@@ -618,3 +618,23 @@ body.viewing-as .launcher { height: calc(100vh); }
 .sostep .sigbox { max-width: none; }
 .upper { text-transform: uppercase; letter-spacing: .06em; font-weight: 600; }
 table.t tr.sogrp td { background: rgba(127, 127, 127, .08); font-size: 14px; }
+
+/* ---------- v2.4: job planner ---------- */
+.row3 { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 0 12px; }
+.qgrid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 0 12px; margin-top: 4px; }
+.qgrid .f { font-size: 13px; }
+.pllive { border: 1px solid var(--line); border-radius: 10px; padding: 12px 14px; margin-top: 12px; background: #fafafb; }
+.pllive.ok { border-color: #9fd2b5; background: #f1faf4; }
+.pllive.ok b { color: #217A4B; }
+.pllive.bad { border-color: #f0b7b1; background: #fdf3f2; }
+.pllive.bad b { color: #B3261E; }
+.pllive ul { margin: 6px 0 4px 18px; padding: 0; }
+.plsetup td.plcell { cursor: pointer; vertical-align: top; min-width: 150px; }
+.plsetup td.plcell:hover { background: rgba(232, 85, 44, .06); }
+.plsetup td.plcell .tag { font-size: 12px; }
+#pl-tabs { margin: 4px 0 14px; }
+.kpi .l .sub { font-weight: 400; }
+@media (max-width: 760px) { .row3, .qgrid { grid-template-columns: 1fr 1fr; } }
+.board .kpi.bad .n { color: var(--bad); }
+.board .kpi.ok .n { color: var(--ok); }
+table.t tfoot tr.totalrow td { border-top: 2px solid var(--ink); background: #f3f4f5; }

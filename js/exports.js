@@ -282,7 +282,7 @@ async function signEvents(type, ids) {
 
 function drawSignatures(doc, signatures, y, imgs) {
   const W = doc.internal.pageSize.getWidth(), H = doc.internal.pageSize.getHeight();
-  const per = Math.min(signatures.length, W > H ? 4 : 3), gap = 8, sw = (W - 20 - (per - 1) * gap) / per, rowH = 38;
+  const per = Math.min(Math.max(signatures.length, 3), W > H ? 4 : 3), gap = 8, sw = (W - 20 - (per - 1) * gap) / per, rowH = 38;
   signatures.forEach((s, i) => {
     if (i % per === 0) {
       if (i) y += rowH;
@@ -365,6 +365,7 @@ async function brandPdf({ file, title, subtitle, orientation = 'landscape', meta
       const row = R[d.row.index]; if (!row) return;
       if (row._spacer) { Object.assign(d.cell.styles, { minCellHeight: row.h, fillColor: false, lineWidth: 0, cellPadding: 0 }); if (d.column.index === 0) d.cell.colSpan = s.columns.length; return; }
       if (row._group) { Object.assign(d.cell.styles, { fillColor: rgb(PDF_INK.group), textColor: rgb(PDF_INK.ink), fontStyle: 'bold' }); if (d.column.index === 0) { d.cell.colSpan = s.columns.length; d.cell.styles.halign = 'left'; } return; }
+      if (row._total) { Object.assign(d.cell.styles, { fillColor: rgb(PDF_INK.head), fontStyle: 'bold', lineColor: rgb(PDF_INK.ink), lineWidth: { top: .35 } }); if (d.column.dataKey === 'size') d.cell.styles.fontStyle = 'normal'; return; }
       const st = (s.cellStyle && s.cellStyle(row, d.column.dataKey)) || (row._st && row._st[d.column.dataKey]);
       if (st && STATUS_TEXT[st]) { d.cell.styles.textColor = rgb(STATUS_TEXT[st]); d.cell.styles.fontStyle = 'bold'; }
     },

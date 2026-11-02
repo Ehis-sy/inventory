@@ -1,4 +1,40 @@
-# GANKCO Nest: version 2.3 update
+# GANKCO Nest: version 2.4 update
+
+*Built to support engineered solutions.*
+
+## Install 2.4 (about 5 minutes)
+
+1. **Supabase → SQL Editor → New query:** paste all of **`5-nest-v2.4-upgrade.sql`** and press **Run**. Wait for **Success**. It's safe to run again.
+2. **GitHub:** unzip **`gankco-nest-v2.4.zip`** and upload everything from the folder into your `inventory` repository (**Add file → Upload files**), then commit. Keep the `CNAME` file.
+3. After 1–2 minutes, anyone with Nest open sees **"A new version is available: Reload"**.
+
+## After installing
+
+1. **Job planner → Setup** (Thru-Tubing admins or Super Admin): check which Nest item each part uses for each tubing size. Nest linked them by part number; the service tools (setting sleeves, extension rods, retrieving tools) are best guesses. Click a cell to change it.
+2. **Fix two item codes:** the 2-7/8" Paragon II Packer is coded `GEST-TT-…` (typo), and `GES-TT-DHT-SCRN-150-0001DS` is used for both the 200µ and 230µ 1-1/2" screens. Give one of them a new code.
+3. **Prices:** fill in the parts that show "no price" (for example the blanks, PCMs and EMSTs). Either press **Edit price** on a line of the **Ship-in list**, or use **Setup → Prices** for the full list.
+4. **Management:** on the **Team** page, set managers' access to **Management**.
+
+## What's new in 2.4
+
+- **Job planner** (menu → Job planner, for everyone). Your "Inventory vs Job Tracker" Excel, built into Nest for Thru-Tubing screen hang-off BHAs:
+  - **Add upcoming job:** well, customer, month, tubing size, setting tool, blank, screens and quantities. A live check shows **✔ Can be done from shelf** or **✖ Short: …** while you type.
+  - Stock comes from **live Nest stock** (in store, available, all locations). There's no separate count to enter.
+  - **Same rules as the sheet:** jobs are checked in date order, 10 ft blanks are pooled for 2-3/8" and 2-7/8", PCM and EMST are shared by 2-7/8" and 3-1/2", and service tools are needed once per size.
+  - **Request** on a job creates a draft materials request with the right items. Once it's issued, the job counts as **Run** and its parts aren't counted again. This replaces the "Done" rows.
+  - **Summary:** complete BHAs on the shelf per size and what limits them, plus surplus/shortfall for every part.
+  - **Ship-in list:** split into short for jobs and safety top-up (Safety BHAs per size and spare EMSTs, set on Setup), with job-by-job shortages.
+  - Your 8 upcoming jobs from the Excel are already loaded.
+- **Management report:** "Inventory vs Upcoming Jobs" as a PDF or Excel, downloaded whenever needed (no sign-off). It covers headline numbers, job-by-job readiness, the ship-in order and complete BHAs.
+- **USD prices:** loaded from your two PO sheets. The Ship-in list and report end with a **Total** row (units and estimated cost, noting any lines with no price).
+  - **Seen by** admins, the Super Admin and Management. Staff never see prices.
+  - **Changed only by** admins and the Super Admin, via **Edit price** on the Ship-in list, or **Setup → Prices** (Thru-Tubing admins and Super Admin). The database enforces this, and every change is in the audit log.
+- **Management access:** view-only. It sees Overview, Inventory, Job planner, Reports and Sign-offs (with prices) and can download reports, but can't change anything. **View as → Management** shows you what they see.
+- **Locations:** Port Harcourt and Warri are deleted. Admins can now **Delete** any location that has never been used.
+
+---
+
+# Earlier: version 2.3 update
 
 *Built to support engineered solutions.*
 

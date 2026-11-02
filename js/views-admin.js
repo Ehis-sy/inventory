@@ -205,7 +205,7 @@ ROUTES.locations = {
       `<section class="panel"><table class="t stack"><thead><tr><th>Location</th><th>Kind</th><th class="num">Items</th><th class="num">Quantity</th><th></th></tr></thead><tbody>
       ${S.locs.map(l => `<tr><td class="full"><div class="name">${esc(l.name)} ${l.active ? '' : chip('muted', 'Closed')} ${l.is_placeholder ? chip('soon', 'Waiting to be placed') : ''}</div>${l.notes ? `<div class="sub">${esc(l.notes)}</div>` : ''}</td>
         <td>${l.is_placeholder ? '—' : LOC_KINDS[l.kind]}</td><td class="num">${by[l.id]?.items.size || 0}</td><td class="num">${fq(by[l.id]?.qty || 0)}</td>
-        <td class="num"><a class="btn small" href="#/inventory" data-filter="${l.id}">View stock</a>${l.is_placeholder ? '' : ` <button class="btn small link" data-edit="${l.id}">Edit</button>`}</td></tr>`).join('')}
+        <td class="num nowrap"><a class="btn small" href="#/inventory" data-filter="${l.id}">View stock</a>${l.is_placeholder ? '' : ` <button class="btn small link" data-edit="${l.id}">Edit</button>`}${!by[l.id] && !l.is_placeholder ? ` <button class="btn small link danger" data-delloc="${l.id}">Delete</button>` : ''}</td></tr>`).join('')}
       </tbody></table></section>
       ${placeholderLoc() && by[placeholderLoc().id] ? `<div class="notice">${plural(by[placeholderLoc().id].items.size, 'item')} still have no location. Staff can place them from Inventory (select items → Move location) or with the Locations Excel template.</div>` : ''}
       <div class="topbar" style="margin-top:28px"><div><h1 style="font-size:22px">Service lines & categories</h1></div></div>
@@ -229,6 +229,11 @@ ROUTES.locations = {
     });
     $('#addloc', main).onclick = () => editLoc(null);
     $$('[data-edit]', main).forEach(b => b.onclick = () => editLoc(S.locs.find(l => l.id === +b.dataset.edit)));
+    $$('[data-delloc]', main).forEach(b => b.onclick = async () => {
+      const l = S.locs.find(x => x.id === +b.dataset.delloc);
+      if (!confirm(`Delete ${l.name} for good? This only works for a location that has never been used.`)) return;
+      try { await q(sb.rpc('delete_location', { p_id: l.id })); toast(`${l.name} deleted`); await loadLookups(); render({ quiet: true }); } catch (e) { toast(niceError(e), true); }
+    });
     $$('[data-filter]', main).forEach(b => b.onclick = () => { Object.assign(S.inv, { loc: b.dataset.filter, view: 'all', cat: '', q: '' }); });
     $$('[data-addcat]', main).forEach(b => b.onclick = () => modal({ title: 'Add category', submit: 'Add', body: '<label class="f">Name<input type="text" name="name" required></label>',
       onSubmit: async x => { if (!x.name.trim()) throw new Error('Enter a name.'); await q(sb.from('categories').insert({ department_id: +b.dataset.addcat, name: x.name.trim(), sort: 999 })); toast('Category added'); render({ quiet: true }); } }));
@@ -249,7 +254,7 @@ ROUTES.team = {
     const dom = (CFG.SIGNUP_DOMAIN || '').toLowerCase();
     const offDomain = dom ? people.filter(p => !String(p.email || '').toLowerCase().endsWith('@' + dom) && p.role !== 'disabled') : [];
     this.offDomain = offDomain;
-    const roleOpts = p => isSuper() ? ['pending', 'staff', 'admin', 'superadmin', 'disabled'] : (['pending', 'staff', 'disabled'].includes(p.role) ? ['pending', 'staff', 'disabled'] : null);
+    const roleOpts = p => isSuper() ? ['pending', 'staff', 'admin', 'management', 'superadmin', 'disabled'] : (['pending', 'staff', 'disabled'].includes(p.role) ? ['pending', 'staff', 'disabled'] : null);
     return topbar('Team', isSuper() ? 'Approve people, choose their access and service lines, and set who approves for each line.' : 'Approve new staff and assign them to the service lines you look after.') +
       `<div class="notice ok">To add someone, send them this link and ask them to create an account: <b>${esc(location.origin + location.pathname)}</b>. They’ll appear here for approval.</div>
       ${offDomain.length && isSuper() ? `<div class="notice">${plural(offDomain.length, 'account')} ${offDomain.length === 1 ? 'isn’t' : 'aren’t'} on a GANKCO email address (@${esc(dom)}). They keep working, but should be moved to their company email. Press <b>Fix email</b> next to each one.</div>` : ''}
@@ -263,7 +268,7 @@ ROUTES.team = {
         const act = !['pending', 'disabled'].includes(p.role);
         return `<tr><td class="full"><div class="name">${esc(p.full_name || '—')}${p.id === S.profile.id ? ' <span class="sub">(you)</span>' : ''}</div></td>
         <td>${p.job_title ? esc(p.job_title) : act ? chip('soon', 'No job title') : '<span class="sub">—</span>'}${canEditTitle(p) ? ` <button class="btn small link" data-title="${p.id}">${p.job_title ? 'Edit' : 'Set'}</button>` : ''}</td><td>${esc(p.email)}${off ? ' ' + chip('soon', 'Not a GANKCO email') : ''}</td>
-        <td>${ro && p.id !== S.profile.id ? `<select data-role="${p.id}" class="inline">${ro.map(k => opt(k, ROLE_LABEL[k], p.role)).join('')}</select>` : chip(p.role === 'superadmin' ? 'out' : p.role === 'admin' ? 'reserved' : 'muted', ROLE_LABEL[p.role])}</td>
+        <td>${ro && p.id !== S.profile.id ? `<select data-role="${p.id}" class="inline">${ro.map(k => opt(k, ROLE_LABEL[k], p.role)).join('')}</select>` : chip(p.role === 'superadmin' ? 'out' : p.role === 'admin' ? 'reserved' : p.role === 'management' ? 'soon' : 'muted', ROLE_LABEL[p.role])}</td>
         <td>${p.role === 'superadmin' ? '<span class="sub">All lines</span>' : ls.length ? ls.map(d => `<span class="linebadge">${esc(lineShort(d))}</span>`).join(' ') : '<span class="sub">None</span>'}</td>
         <td>${p.signature_id ? chip('ok', 'Added') : '<span class="sub">Not added</span>'}${p.signature_id && isSuper() && p.id !== S.profile.id ? ` <button class="btn small link danger" data-unsig="${p.id}">Remove</button>` : ''}</td>
         <td class="num nowrap">${off && isSuper() ? `<button class="btn small" data-fix="${p.id}">Fix email</button> ` : ''}${p.role !== 'superadmin' && (isSuper() || ['staff', 'pending', 'disabled'].includes(p.role)) ? `<button class="btn small" data-lines="${p.id}">Lines</button>` : ''}</td></tr>`; }).join('')}
@@ -276,6 +281,7 @@ ROUTES.team = {
       <section class="panel"><div class="body"><b>What each role can do</b>
         <dl class="kv mt"><dt>Staff</dt><dd>Day-to-day work in their own service line(s): check out and in, materials requests, receive, move between Port Harcourt and Warri, issue and sell, monthly counts and certificates. Quantity corrections and kit details go to their admin for approval. Staff can see all stock but don’t see Setup.</dd>
         <dt>Admin</dt><dd>Everything staff can do, plus approving requests and managing items for their service lines, locations, labels, approving new staff, and the audit log for their lines.</dd>
+        <dt>Management</dt><dd>View-only: Overview, Inventory, Job planner, Reports and Sign-offs, including prices. Can download reports but can’t change anything. Only the Super Admin can give this access.</dd>
         <dt>Super Admin</dt><dd>Everything, in every service line: making admins, choosing who approves for each line, settings, and the full audit log.</dd></dl></div></section>`;
   },
   bind(main) {
@@ -316,8 +322,8 @@ ROUTES.team = {
 // ================================================================ AUDIT LOG
 const AUDIT_TABLES = { stock: 'Stock movements', items: 'Items', units: 'Serials & kit numbers', unit_components: 'Kit component expiry', kit_components: 'Kit components', certifications: 'Certificates',
   locations: 'Locations', departments: 'Service lines', categories: 'Categories', profiles: 'People & access', memberships: 'Service-line membership', jobs: 'Materials requests', job_lines: 'Materials request lines', job_sections: 'Request approvals by line',
-  change_batches: 'Requests & approvals', counts: 'Monthly counts', app_settings: 'Settings', report_signoffs: 'Report sign-offs', sign_events: 'Signatures on documents', documents: 'Signed downloads', signatures: 'Signature uploads' };
-const AUDIT_NOUN = { items: 'Item', units: 'Serial / kit number', unit_components: 'Kit component expiry', kit_components: 'Kit component', certifications: 'Certificate', locations: 'Location', departments: 'Service line', categories: 'Category', profiles: 'Person', memberships: 'Service-line membership', jobs: 'Materials request', job_lines: 'Materials request line', job_sections: 'Materials request line approval', change_batches: 'Request', counts: 'Monthly count', app_settings: 'Setting', report_signoffs: 'Report sign-off', sign_events: 'Document', documents: 'Document', signatures: 'Signature' };
+  change_batches: 'Requests & approvals', counts: 'Monthly counts', app_settings: 'Settings', report_signoffs: 'Report sign-offs', sign_events: 'Signatures on documents', documents: 'Signed downloads', signatures: 'Signature uploads', plan_jobs: 'Job planner', item_prices: 'Prices' };
+const AUDIT_NOUN = { items: 'Item', units: 'Serial / kit number', unit_components: 'Kit component expiry', kit_components: 'Kit component', certifications: 'Certificate', locations: 'Location', departments: 'Service line', categories: 'Category', profiles: 'Person', memberships: 'Service-line membership', jobs: 'Materials request', job_lines: 'Materials request line', job_sections: 'Materials request line approval', change_batches: 'Request', counts: 'Monthly count', app_settings: 'Setting', report_signoffs: 'Report sign-off', sign_events: 'Document', documents: 'Document', signatures: 'Signature', plan_jobs: 'Planned job', item_prices: 'Price' };
 const FIELD_LABEL = { profile_id: 'Person', name: 'Description', code: 'Item code', min_qty: 'Reorder at', max_qty: 'Restock up to', item_type: 'Type', unit: 'Unit', supplier: 'Supplier', notes: 'Notes', active: 'Active', role: 'Access',
   state: 'Status', department_id: 'Service line', category_id: 'Category', is_kit: 'Redress kit', serial_no: 'Serial / kit no.', lot_no: 'Lot', expiry_on: 'Expiry', due_on: 'Due', cert_no: 'Certificate no.',
   title: 'Job', status: 'Status', requester_name: 'Requester', requester_id: 'Requester', main_admin: 'Main admin', backup_admin: 'Backup admin', full_name: 'Name', value: 'Value', qty: 'Qty', location_id: 'Location', decision_note: 'Note', kind: 'Kind', superseded: 'Superseded', job_title: 'Job title', signature_id: 'Signature', step: 'Step', document: 'Document', signature: 'Signature', removed_at: 'Removed', return_note: 'Return note', period_label: 'Period', ref: 'Ref', received_by_name: 'Receipt confirmed by', received_at: 'Receipt confirmed' };
