@@ -1,4 +1,22 @@
-# GANKCO Nest: version 2.1 update
+# GANKCO Nest: version 2.2 update
+
+*Built to support engineered solutions.*
+
+## Install 2.2 (about 2 minutes, no SQL)
+
+1. **GitHub:** unzip **`gankco-nest-v2.2.zip`** and upload everything from the folder into your `inventory` repository (**Add file → Upload files**), then commit. Keep the `CNAME` file.
+2. After 1–2 minutes, anyone with Nest open sees **"A new version is available: Reload"**.
+
+## What's new in 2.2
+
+- **The Nest home screen fits on one screen on a laptop or desktop.** No scrolling.
+- The three tiles (Inventory, Purchase Orders, Proforma Invoices & Quotes) sit in one row, and the welcome area is shorter.
+- **Team & access is now a button in the top bar** (admins and Super Admin only). Staff don't see it.
+- On phones, the tiles still stack and scroll as before.
+
+---
+
+# Earlier: version 2.1 update
 
 *Built to support engineered solutions.*
 

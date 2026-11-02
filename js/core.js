@@ -514,7 +514,7 @@ async function renderLauncher() {
   const apps = p.apps || ['inventory'];
   $('#app').innerHTML = `${viewAsBar()}<div class="launcher">
     <header class="l-top"><a class="brand" href="#/"><img src="brand/mark-96.png" alt=""><span class="brand-name">${wordmark()}<small>Nest</small></span></a>
-      <div class="l-right">${realSuper() ? `<button class="btn small ghost" id="viewas">${S.viewAs ? 'Change view' : 'View as…'}</button>` : ''}<button class="bell inline" id="bell" aria-label="Notifications">${ico('bell')}<span class="bell-count" hidden></span></button>
+      <div class="l-right">${isAdmin() ? `<a class="btn small ghost" href="#/team">${ico('users')}Team &amp; access</a>` : ''}${realSuper() ? `<button class="btn small ghost" id="viewas">${S.viewAs ? 'Change view' : 'View as…'}</button>` : ''}<button class="bell inline" id="bell" aria-label="Notifications">${ico('bell')}<span class="bell-count" hidden></span></button>
       <a class="btn small ghost" href="#/account">${esc(p.full_name || p.email)}</a><button class="btn small ghost" id="out">Sign out</button></div></header>
     <section class="l-hero"><img class="l-mark" src="brand/mark.png" alt="">
       <div><div class="l-tag">${esc(CFG.TAGLINE || '')}</div><h1>${first ? `Welcome back, ${esc(first)}` : 'Welcome'}</h1>
@@ -527,8 +527,6 @@ async function renderLauncher() {
         <span class="t-desc">Raise and track purchase orders to OEMs and suppliers.</span><span class="t-meta">Coming later</span></div>
       <div class="tile soon"><span class="t-ico">${ico('chart')}</span><span class="t-name">Proforma Invoices &amp; Quotes</span>
         <span class="t-desc">Prepare quotes and proforma invoices for clients.</span><span class="t-meta">Coming later</span></div>
-      ${isAdmin() ? `<a class="tile admin" href="#/team"><span class="t-ico">${ico('users')}</span><span class="t-name">Team &amp; access</span>
-        <span class="t-desc">Approve people, set roles and service lines.</span><span class="t-meta">Manage</span></a>` : ''}
     </section>
     <footer class="l-foot">${esc(CFG.COMPANY || '')} · ${esc(CFG.MOTTO || '')}<br><span>${esc(CFG.APP_NAME)} v${esc(CFG.VERSION || '')}</span></footer></div>`;
   $('#out').onclick = () => sb.auth.signOut(); $('#bell').onclick = openBell;
