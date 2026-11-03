@@ -207,7 +207,7 @@ ROUTES.planner = {
       return `<td class="num"><b class="${net < 0 ? 'neg' : g.need ? 'pos' : ''}">${net < 0 ? '(' + fq(-net) + ')' : fq(net)}</b><div class="sub">${fq(g.stock)} on shelf${g.need ? ' · ' + fq(g.need) + ' needed' : ''}</div></td>`;
     };
     return `<section class="panel"><header><h2>Complete BHAs on the shelf</h2><span class="meta">Packer, crossover, safety joint, coupling, ${esc(cfg.safety_blank || '10 ft')} blank and bull nose · screens not included</span></header>
-      <div class="tablewrap"><table class="t plbha"><thead><tr><th>Tubing size</th><th class="num">On the shelf now</th><th>Limited by <span class="sub">(below the safety target)</span></th><th class="num">Left after jobs</th><th class="num">Safety target</th><th class="num">Above / (below) target</th><th class="num">Screens (all µ)</th></tr></thead><tbody>
+      <div class="tablewrap"><table class="t plbha"><thead><tr><th>Tubing size</th><th class="num">On the shelf now</th><th>Limited by <span class="sub">(below the safety target)</span></th><th class="num">Complete BHAs after all upcoming jobs<span class="sub th-sub">After every active job on the list takes its parts</span></th><th class="num">Safety target</th><th class="num">Compared with safety target</th><th class="num">Screens (all µ)</th></tr></thead><tbody>
       ${E.bha.map(b => `<tr><td><b>${esc(b.size)}</b>${E.pools.some(pl => pl.sizes.includes(b.size)) ? ` <span class="chip muted">shared ${esc(cfg.safety_blank || '10 ft')} blanks</span>` : ''}</td><td class="num"><b>${b.n}</b></td>
         <td class="${b.limitedBy === 'None' ? 'sub' : ''}">${esc(b.limitedBy)}</td><td class="num"><b>${b.after}</b></td><td class="num">${fq(b.target)}</td>
         <td class="num"><b class="${b.vs < 0 ? 'neg' : 'pos'}">${b.vs < 0 ? '(' + fq(-b.vs) + ')' : fq(b.vs)}</b></td><td class="num">${fq(b.screens)}</td></tr>`).join('')}</tbody></table></div>
@@ -220,7 +220,7 @@ ROUTES.planner = {
     const show = E.lines.filter(l => l.total > 0).sort((a, b) => a.part.sort - b.part.sort || a.label.localeCompare(b.label));
     const byJob = [...E.results.values()].filter(r => !r.ok);
     const pr = canSeePrices();
-    return `<section class="panel"><header><h2>Ship-in order</h2><span class="meta">${fq(E.kpi.total)} units · ${fq(E.kpi.forJobs)} short for jobs + ${fq(E.kpi.topup)} safety top-up${pr ? ' · est. ' + usd(E.kpi.cost) : ''}</span></header>
+    return `<section class="panel"><header><h2>Ship-in order</h2><span class="meta">${fq(E.kpi.total)} units · ${fq(E.kpi.forJobs)} short for jobs + ${fq(E.kpi.topup)} safety top-up${pr ? ' · est. ' + usd(E.kpi.cost) : ''}</span>${show.length && typeof poCanRaise === 'function' && poCanRaise() ? `<button class="btn small tagbtn hdr-btn" id="pl-po">${ico('audit')}Create purchase order</button>` : ''}</header>
       <div class="tablewrap"><table class="t"><thead><tr><th>Part</th><th>Tubing size</th><th class="num">For jobs</th><th class="num">Safety top-up</th><th class="num">Total</th>${pr ? '<th class="num">Unit price</th><th class="num">Est. cost</th>' : ''}${canEditPrices() ? '<th></th>' : ''}</tr></thead><tbody>
       ${show.length ? show.map(l => `<tr><td class="full"><div class="name">${esc(partName(l.part))}</div>${!l.g.linked ? '<div class="sub neg">No Nest item linked</div>' : ''}</td><td>${esc(l.label)}</td><td class="num">${l.forJobs ? fq(l.forJobs) : '·'}</td><td class="num">${l.topup ? fq(l.topup) : '·'}</td><td class="num"><b>${fq(l.total)}</b></td>
         ${pr ? `<td class="num">${l.unit == null ? '<span class="sub">no price</span>' : usd(l.unit)}</td><td class="num">${l.cost == null ? '' : usd(l.cost)}</td>` : ''}
@@ -270,6 +270,7 @@ ROUTES.planner = {
     const np = $('#pl-newpart', main); if (np) np.onclick = () => editPlanPart(null);
     $$('[data-part-edit]', main).forEach(b => b.onclick = () => editPlanPart(P.parts.find(p => p.id === +b.dataset.partEdit)));
     $$('[data-price]', main).forEach(b => b.onclick = () => editLinePrice(P, E.G[b.dataset.price]));
+    const po = $('#pl-po', main); if (po) po.onclick = async () => { await poLookups(); poFromPlanner(E); };
     const f = $('#pl-cfg', main);
     if (f) f.onsubmit = async e => {
       e.preventDefault(); const cfg = planCfg(); const x = Object.fromEntries(new FormData(f).entries());
@@ -459,8 +460,8 @@ async function planReport(kind) {
         { header: 'Safety top-up', key: 'top', width: 12, type: 'num' }, { header: 'Total', key: 'tot', width: 9, type: 'num', bold: true }, ...(pr ? [{ header: 'Unit price (USD)', key: '_unit', width: 15, type: 'num' }, { header: 'Est. cost (USD)', key: '_cost', width: 15, type: 'num' }] : [])],
         rows: ship, totals: ['jobs', 'top', 'tot', ...(pr ? ['_cost'] : [])], note: pr ? `Prices from the last purchase orders.${k.unpriced ? ` The total cost excludes ${plural(k.unpriced, 'line')} with no price.` : ''}` : '' },
       { name: 'BHAs on shelf', title: 'Complete BHAs on the shelf', subtitle, note: poolNote, columns: [{ header: 'Tubing size', key: 'size', width: 12 }, { header: 'On the shelf now', key: 'n', width: 15, type: 'num', bold: true },
-        { header: 'Limited by (below the safety target)', key: 'lim', width: 40, wrap: true }, { header: 'Left after jobs', key: 'after', width: 14, type: 'num' }, { header: 'Safety target', key: 'tgt', width: 13, type: 'num' },
-        { header: 'Above / (below) target', key: 'vs', width: 18 }, { header: 'Screens (all µ)', key: 'scr', width: 14, type: 'num' }], rows: bha }] });
+        { header: 'Limited by (below the safety target)', key: 'lim', width: 40, wrap: true }, { header: 'Complete BHAs after all upcoming jobs', key: 'after', width: 20, type: 'num' }, { header: 'Safety target', key: 'tgt', width: 13, type: 'num' },
+        { header: 'Compared with safety target', key: 'vs', width: 18 }, { header: 'Screens (all µ)', key: 'scr', width: 14, type: 'num' }], rows: bha }] });
     return;
   }
   await brandPdf({ file: `GANKCO_Inventory_vs_Jobs_${localISO(0)}.pdf`, title, subtitle, kpis,
@@ -474,7 +475,7 @@ async function planReport(kind) {
         ...(pr ? [{ header: 'Unit (USD)', dataKey: 'unit', width: 24, align: 'right' }, { header: 'Est. cost (USD)', dataKey: 'cost', width: 28, align: 'right' }] : [])],
         rows: ship.length ? [...ship, { part: 'Total', size: pr && k.unpriced ? `Cost excludes ${plural(k.unpriced, 'line')} with no price` : '', jobs: fq(k.forJobs), top: fq(k.topup), tot: fq(k.total), unit: '', cost: pr ? usd(k.cost) : '', _total: true }] : [{ part: 'Nothing to ship in' }] },
       { heading: 'Complete BHAs on the shelf', note: poolNote, columns: [{ header: 'Tubing size', dataKey: 'size', width: 24 }, { header: 'On shelf now', dataKey: 'n', width: 22, align: 'right' }, { header: 'Limited by (below safety target)', dataKey: 'lim' },
-        { header: 'Left after jobs', dataKey: 'after', width: 24, align: 'right' }, { header: 'Safety target', dataKey: 'tgt', width: 22, align: 'right' }, { header: 'Above / (below)', dataKey: 'vs', width: 24, align: 'right' }, { header: 'Screens', dataKey: 'scr', width: 18, align: 'right' }], rows: bha },
+        { header: 'After all upcoming jobs', dataKey: 'after', width: 26, align: 'right' }, { header: 'Safety target', dataKey: 'tgt', width: 22, align: 'right' }, { header: 'Compared with target', dataKey: 'vs', width: 26, align: 'right' }, { header: 'Screens', dataKey: 'scr', width: 18, align: 'right' }], rows: bha },
     ],
     signatures: [mySignature('Prepared by', `${title} · ${subtitle}`)] });
 }

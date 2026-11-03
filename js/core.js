@@ -294,7 +294,7 @@ async function openBell() {
   const notes = await q(sb.from('notifications').select('*').order('created_at', { ascending: false }).limit(40)).catch(() => []);
   const R = S.alerts.reminders;
   if (S.viewAs) notes.length = 0;
-  const icon = k => ({ issued: 'truck', approval: 'check', count: 'count', late: 'clock', kit: 'kit', cert: 'cert', low: 'box', faulty: 'box', missing: 'truck', decision: 'check', signup: 'users', signoff: 'sign', backup: 'down' }[k] || 'bell');
+  const icon = k => ({ issued: 'truck', approval: 'check', count: 'count', late: 'clock', kit: 'kit', cert: 'cert', low: 'box', faulty: 'box', missing: 'truck', decision: 'check', signup: 'users', signoff: 'sign', backup: 'down', po: 'audit' }[k] || 'bell');
   const li = (n, unread) => `<li class="${unread ? 'unread' : ''}"><a href="${esc(n.link || '#/dashboard')}" data-close><span class="ni ni-${esc(n.kind || 'x')}">${ico(icon(n.kind))}</span>
     <span><b>${esc(n.title)}</b>${n.body ? `<span class="sub">${esc(n.body)}</span>` : ''}${n.created_at ? `<span class="sub">${fdt(n.created_at)}</span>` : ''}</span></a></li>`;
   const d = document.createElement('div'); d.className = 'bellpanel'; d.setAttribute('role', 'dialog'); d.setAttribute('aria-label', 'Notifications');
@@ -319,9 +319,10 @@ function subscribe() {
   }, 900);
   try {
     S.channel = sb.channel('nest-live');
-    ['stock', 'checkouts', 'movements', 'change_batches', 'items', 'counts', 'jobs', 'job_sections', 'report_signoffs', 'plan_jobs', 'item_orders', 'service_log'].forEach(t =>
+    ['stock', 'checkouts', 'movements', 'change_batches', 'items', 'counts', 'jobs', 'job_sections', 'report_signoffs', 'plan_jobs', 'item_orders', 'service_log', 'po_orders', 'po_receipts', 'po_revisions'].forEach(t =>
       S.channel.on('postgres_changes', { event: '*', schema: 'public', table: t }, onChange));
     S.channel.on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'notifications' }, () => refreshAlerts());
+    S.channel.on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'audit_log' }, p => typeof onAuditLive === 'function' && onAuditLive(p));
     S.channel.on('postgres_changes', { event: '*', schema: 'public', table: 'maintenance_windows' }, () => typeof onMaintChange === 'function' && onMaintChange());
     S.channel.subscribe();
   } catch (e) { console.warn('Live updates unavailable', e); }
@@ -403,6 +404,7 @@ function renderAuth(mode = 'signin', message = '', ok = false) {
       <button class="btn primary" type="submit">Send reset link</button>
       <div class="alt"><a href="#" data-m="signin">Back to sign in</a></div></form>`);
   $$('[data-m]').forEach(a => a.onclick = e => { e.preventDefault(); renderAuth(a.dataset.m); });
+  if (mode === 'signin') signinMaintNotice();
   const f = $('#f');
   f.onsubmit = async e => {
     e.preventDefault();
@@ -425,6 +427,19 @@ function renderAuth(mode = 'signin', message = '', ok = false) {
       }
     } catch (ex) { b.disabled = false; renderAuth(mode, niceError(ex)); }
   };
+}
+
+// Sign-in page: say when Nest is under maintenance (or about to be), before anyone signs in
+async function signinMaintNotice() {
+  try {
+    const { data: w } = await sb.rpc('maint_public'); if (!w || !$('#f')) return;
+    const t = d => new Date(d).toLocaleString('en-GB', { weekday: 'short', day: 'numeric', month: 'short', hour: 'numeric', minute: '2-digit', hour12: true });
+    const back = w.back_by ? (new Date(w.back_by) < new Date() ? 'shortly' : 'by ' + t(w.back_by)) : 'soon';
+    const n = document.createElement('div'); n.className = 'notice maint-signin';
+    n.innerHTML = w.on ? `<b>Nest is being updated.</b> ${esc(w.message || 'Your data is safe.')} It’ll be back ${esc(back)}. You can sign in now, but you’ll see the maintenance screen until it’s done.`
+      : `<b>Heads-up:</b> Nest will be updated on ${esc(t(w.starts_at))}${w.back_by ? `, back by ${esc(t(w.back_by))}` : ''}. Save your work before then.`;
+    ($('#f p.sub') || $('#f h1')).insertAdjacentElement('afterend', n);
+  } catch (e) { /* not important */ }
 }
 
 function renderReset() {
@@ -461,6 +476,7 @@ function canSignReport(r) {
 }
 
 function navItems() {
+  if (S.shellApp === 'po' && typeof poNav === 'function') return poNav();
   const main = [['dashboard', 'Overview', 'home'], ['inventory', 'Inventory', 'box'], ['scan', 'Scan', 'scan'],
     ['jobs', 'Materials requests', 'truck'], ['planner', 'Job planner', 'plan'], ['checkouts', 'Out on jobs', 'out'], ['count', 'Monthly count', 'count'],
     ['certs', 'Certificates & kits', 'cert'], ['reports', 'Reports', 'chart'], ['signoffs', 'Sign-offs', 'sign'], ['activity', 'Activity', 'clock'],
@@ -478,7 +494,7 @@ function shell() {
   $('#app').innerHTML = `<div class="shell">
     <aside class="side">
       <a class="brand" href="#/"><img src="brand/mark-96.png" alt="">
-        <span class="brand-name">${wordmark()}<small>Nest · Inventory</small></span></a>
+        <span class="brand-name">${wordmark()}<small>Nest · ${S.shellApp === 'po' ? 'Purchasing' : 'Inventory'}</small></span></a>
       <a class="apps-link" href="#/">${ico('grid')}All apps</a>
       <nav class="nav">${main.map(link).join('')}
         ${setup.length ? `<div class="nav-group">Setup</div>${setup.map(link).join('')}` : ''}</nav>
@@ -489,13 +505,13 @@ function shell() {
     </aside>${viewAsBar()}
     <main id="main"></main>
     <button class="bell" id="bell" aria-label="Notifications">${ico('bell')}<span class="bell-count" hidden></span></button>
-    <nav class="bottombar">
+    ${S.shellApp === 'po' && typeof poBottomBar === 'function' ? poBottomBar() : `<nav class="bottombar">
       <a href="#/dashboard" data-r="dashboard">${ico('home')}Overview</a>
       <a href="#/inventory" data-r="inventory">${ico('box')}Inventory</a>
       <a href="#/scan" data-r="scan" class="scan"><span class="disc">${ico('scan')}</span>Scan</a>
       <a href="#/jobs" data-r="jobs">${ico('truck')}Requests</a>
       <a href="#/more" data-r="more">${ico('more')}More</a>
-    </nav></div>`;
+    </nav>`}</div>`;
   $('#signout').onclick = e => { e.preventDefault(); sb.auth.signOut(); };
   $('#bell').onclick = openBell;
   const va = $('#viewas'); if (va) va.onclick = openViewAs; bindViewAs();
@@ -514,16 +530,18 @@ async function render(opts = {}) {
   if (typeof maintGate === 'function' && maintGate(r)) return;
   if (r === '' || r === 'home') { S.shellReady = false; return renderLauncher(); }
   if (S.inv.edit && r !== 'inventory') { S.inv.edit = false; S.inv.changes.clear(); }
+  const app = r === 'po' ? 'po' : 'inventory';
+  if (S.shellApp !== app) { S.shellApp = app; S.shellReady = false; }
   shell();
   const view = ROUTES[r] || ROUTES.dashboard;
-  setNav(r === 'item' ? 'inventory' : r === 'job' ? 'jobs' : r);
+  setNav(r === 'item' ? 'inventory' : r === 'job' ? 'jobs' : r === 'po' ? (parts[1] && isNaN(+parts[1]) ? 'po/' + parts[1] : 'po') : r);
   const main = $('#main'); const seq = ++renderSeq;
   const y = window.scrollY;
   if (!opts.quiet) main.innerHTML = '<div class="loading">Loading…</div>';
   try {
     const html = await view.load(parts, params);
     if (seq !== renderSeq) return;
-    main.innerHTML = (typeof maintBars === 'function' ? maintBars('inventory', true) : '') + html + `<div class="pagefoot">${esc(CFG.APP_NAME)} · ${esc(CFG.TAGLINE || '')} · v${esc(CFG.VERSION || '')}</div>`;
+    main.innerHTML = (typeof maintBars === 'function' ? maintBars(app, true) : '') + html + `<div class="pagefoot">${esc(CFG.APP_NAME)} · ${esc(CFG.TAGLINE || '')} · v${esc(CFG.VERSION || '')}</div>`;
     if (typeof bindMaintBars === 'function') bindMaintBars(main);
     view.bind && view.bind(main, parts, params);
     if (opts.quiet) window.scrollTo(0, y); else window.scrollTo(0, 0);
@@ -568,7 +586,7 @@ async function renderLauncher() {
       <p>Where would you like to go?</p></div></section>
     <section class="tiles">
       ${apps.includes('inventory') ? appTile('inventory', '#/dashboard', 'box', 'Inventory', 'Equipment, stock, materials requests, monthly counts and reports.', '<span class="t-meta" id="invMeta">Open</span>', true) : ''}
-      ${appTile('po', null, 'audit', 'Purchase Order', 'Raise and track purchase orders to OEMs and suppliers.', '<span class="t-meta">Coming later</span>')}
+      ${typeof poCanView === 'function' && poCanView() ? appTile('po', '#/po', 'audit', 'Purchase Order', 'Raise, sign and track purchase orders to OEMs and suppliers.', '<span class="t-meta" id="poMeta">Open</span>', true) : appTile('po', null, 'audit', 'Purchase Order', 'Raise and track purchase orders to OEMs and suppliers.', '<span class="t-meta">Ask the Super Admin for access</span>')}
       ${appTile('proforma', null, 'chart', 'Proforma Invoice &amp; Quote', 'Prepare quotes and proforma invoices for clients.', '<span class="t-meta">Coming later</span>')}
     </section>
     <footer class="l-foot">${esc(CFG.COMPANY || '')} · ${esc(CFG.MOTTO || '')}<br><span>${esc(CFG.APP_NAME)} v${esc(CFG.VERSION || '')} · <span class="credit">${esc(CREDIT)}</span></span></footer></div>`;
@@ -578,6 +596,7 @@ async function renderLauncher() {
   document.body.classList.toggle('viewing-as', !!(S.viewAs && realSuper()));
   await refreshAlerts();
   const m = $('#invMeta'); if (m) { const n = S.alerts.reminders.length; m.textContent = n ? `${plural(n, 'thing')} ${n === 1 ? 'needs' : 'need'} attention` : 'All up to date'; if (n) m.classList.add('hot'); }
+  const pm = $('#poMeta'); if (pm && typeof poTileMeta === 'function') poTileMeta(pm);
 }
 
 // Handheld (keyboard-wedge) scanners: fast keystrokes ending in Enter, outside any text field

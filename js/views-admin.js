@@ -262,7 +262,7 @@ ROUTES.team = {
       ${pending.length ? `<section class="panel"><header><h2>Waiting for approval</h2><span class="meta">${pending.length}</span></header><ul class="list">
         ${pending.map(p => `<li><div style="flex:1"><div class="name">${esc(p.full_name || '—')}</div><div class="sub">${esc(p.email)} · signed up ${fd(p.created_at)}</div></div>
           <div class="end"><button class="btn small tagbtn" data-approve="${p.id}">Approve</button> <button class="btn small" data-deny="${p.id}">Deny</button></div></li>`).join('')}</ul></section>` : ''}
-      <section class="panel"><header><h2>Everyone</h2><span class="meta">${people.length}</span></header><div class="tablewrap"><table class="t stack"><thead><tr><th>Name</th><th>Job title</th><th>Email</th><th>Access</th><th>Service lines</th><th>Signature</th><th></th></tr></thead><tbody>
+      <section class="panel"><header><h2>Everyone</h2><span class="meta">${people.length}</span></header><div class="tablewrap"><table class="t stack"><thead><tr><th>Name</th><th>Job title</th><th>Email</th><th>Access</th><th>Service lines</th><th>Purchase Order</th><th>Signature</th><th></th></tr></thead><tbody>
       ${people.map(p => { const ro = roleOpts(p); const ls = linesOf(p.id);
         const off = offDomain.includes(p);
         const act = !['pending', 'disabled'].includes(p.role);
@@ -270,9 +270,19 @@ ROUTES.team = {
         <td>${p.job_title ? esc(p.job_title) : act ? chip('soon', 'No job title') : '<span class="sub">—</span>'}${canEditTitle(p) ? ` <button class="btn small link" data-title="${p.id}">${p.job_title ? 'Edit' : 'Set'}</button>` : ''}</td><td>${esc(p.email)}${off ? ' ' + chip('soon', 'Not a GANKCO email') : ''}</td>
         <td>${ro && p.id !== S.profile.id ? `<select data-role="${p.id}" class="inline">${ro.map(k => opt(k, ROLE_LABEL[k], p.role)).join('')}</select>` : chip(p.role === 'superadmin' ? 'out' : p.role === 'admin' ? 'reserved' : p.role === 'management' ? 'soon' : 'muted', ROLE_LABEL[p.role])}</td>
         <td>${p.role === 'superadmin' ? '<span class="sub">All lines</span>' : ls.length ? ls.map(d => `<span class="linebadge">${esc(lineShort(d))}</span>`).join(' ') : '<span class="sub">None</span>'}</td>
+        <td>${p.role === 'superadmin' ? '<span class="sub">Always</span>' : p.role === 'management' ? '<span class="sub">View only</span>' : !act ? '<span class="sub">—</span>'
+          : `<label class="switch mini" title="Can raise purchase orders"><input type="checkbox" data-po="${p.id}" ${(p.apps || []).includes('po') ? 'checked' : ''}><span class="sw"></span><span class="sub">${(p.apps || []).includes('po') ? 'Can raise POs' : 'No access'}</span></label>`}</td>
         <td>${p.signature_id ? chip('ok', 'Added') : '<span class="sub">Not added</span>'}${p.signature_id && isSuper() && p.id !== S.profile.id ? ` <button class="btn small link danger" data-unsig="${p.id}">Remove</button>` : ''}</td>
         <td class="num nowrap">${off && isSuper() ? `<button class="btn small" data-fix="${p.id}">Fix email</button> ` : ''}${p.role !== 'superadmin' && (isSuper() || ['staff', 'pending', 'disabled'].includes(p.role)) ? `<button class="btn small" data-lines="${p.id}">Lines</button>` : ''}</td></tr>`; }).join('')}
       </tbody></table></div></section>
+      ${(() => {
+        const mine = S.depts.filter(d => canAdmin(d.id));
+        const rows = mine.flatMap(d => S.members.filter(m => m.department_id === d.id && S.people[m.profile_id]?.role === 'staff').map(m => ({ d, m, p: S.people[m.profile_id] })));
+        return mine.length ? `<section class="panel"><header><h2>Who can receive PO deliveries</h2><span class="meta">Purchase Order app</span></header>
+          <div class="body muted">Each line’s admins can always book goods received against a PO into stock. Switch it on for staff too, for example a storekeeper.</div>
+          ${rows.length ? `<div class="tablewrap"><table class="t stack"><thead><tr><th>Service line</th><th>Staff</th><th>Receive PO deliveries</th></tr></thead><tbody>
+          ${rows.map(({ d, m, p }) => `<tr><td>${esc(d.short_name || d.name)}</td><td class="name">${esc(p.full_name || p.email)}</td><td><label class="switch mini"><input type="checkbox" data-porecv="${p.id}" data-dept="${d.id}" ${m.po_receive ? 'checked' : ''}><span class="sw"></span><span class="sub">${m.po_receive ? 'Yes' : 'No'}</span></label></td></tr>`).join('')}</tbody></table></div>` : '<div class="body"><span class="sub">No staff in your service lines yet.</span></div>'}</section>` : '';
+      })()}
       ${isSuper() ? `<section class="panel"><header><h2>Who approves for each service line</h2></header><div class="tablewrap"><table class="t stack"><thead><tr><th>Service line</th><th>Main admin</th><th>Backup admin</th></tr></thead><tbody>
         ${S.depts.map(d => `<tr><td class="name">${esc(d.name)}</td>
           <td><select data-main="${d.id}" class="inline"><option value="">Any admin of the line</option>${admins.map(a => opt(a.id, a.full_name || a.email, d.main_admin)).join('')}</select></td>
@@ -304,6 +314,14 @@ ROUTES.team = {
     $$('[data-lines]', main).forEach(b => b.onclick = () => editLines(b.dataset.lines, false));
     $$('[data-fix]', main).forEach(b => b.onclick = () => fixEmail(S.people[b.dataset.fix]));
     $$('[data-title]', main).forEach(b => b.onclick = () => editJobTitle(S.people[b.dataset.title]));
+    $$('[data-po]', main).forEach(c => c.onchange = async () => {
+      try { await q(sb.rpc('set_po_access', { p_user: c.dataset.po, p_on: c.checked })); toast(c.checked ? 'Can raise purchase orders' : 'Purchase Order access removed'); await loadLookups(); render({ quiet: true }); }
+      catch (e) { c.checked = !c.checked; toast(niceError(e), true); }
+    });
+    $$('[data-porecv]', main).forEach(c => c.onchange = async () => {
+      try { await q(sb.rpc('set_po_receiver', { p_user: c.dataset.porecv, p_dept: +c.dataset.dept, p_on: c.checked })); toast(c.checked ? 'Can receive PO deliveries' : 'Switched off'); await loadLookups(); render({ quiet: true }); }
+      catch (e) { c.checked = !c.checked; toast(niceError(e), true); }
+    });
     $$('[data-unsig]', main).forEach(b => b.onclick = async () => {
       const p = S.people[b.dataset.unsig]; if (!confirm(`Remove ${p.full_name || p.email}’s signature? Documents they already signed keep it.`)) return;
       try { await q(sb.rpc('remove_signature', { p_user: p.id })); toast('Signature removed'); await loadLookups(); render({ quiet: true }); } catch (e) { toast(niceError(e), true); }
@@ -320,10 +338,10 @@ ROUTES.team = {
 };
 
 // ================================================================ AUDIT LOG
-const AUDIT_TABLES = { stock: 'Stock movements', items: 'Items', units: 'Serials & kit numbers', unit_components: 'Kit component expiry', kit_components: 'Kit components', certifications: 'Certificates',
+const AUDIT_TABLES = { po_orders: 'Purchase orders', po_receipts: 'PO deliveries received', po_suppliers: 'Suppliers', stock: 'Stock movements', items: 'Items', units: 'Serials & kit numbers', unit_components: 'Kit component expiry', kit_components: 'Kit components', certifications: 'Certificates',
   locations: 'Locations', departments: 'Service lines', categories: 'Categories', profiles: 'People & access', memberships: 'Service-line membership', jobs: 'Materials requests', job_lines: 'Materials request lines', job_sections: 'Request approvals by line',
   change_batches: 'Requests & approvals', counts: 'Monthly counts', app_settings: 'Settings', report_signoffs: 'Report sign-offs', sign_events: 'Signatures on documents', documents: 'Signed downloads', signatures: 'Signature uploads', plan_jobs: 'Job planner', item_prices: 'Prices' };
-const AUDIT_NOUN = { items: 'Item', units: 'Serial / kit number', unit_components: 'Kit component expiry', kit_components: 'Kit component', certifications: 'Certificate', locations: 'Location', departments: 'Service line', categories: 'Category', profiles: 'Person', memberships: 'Service-line membership', jobs: 'Materials request', job_lines: 'Materials request line', job_sections: 'Materials request line approval', change_batches: 'Request', counts: 'Monthly count', app_settings: 'Setting', report_signoffs: 'Report sign-off', sign_events: 'Document', documents: 'Document', signatures: 'Signature', plan_jobs: 'Planned job', item_prices: 'Price' };
+const AUDIT_NOUN = { po_orders: 'Purchase order', po_receipts: 'PO delivery', po_suppliers: 'Supplier', po_service_lines: 'PO service line', items: 'Item', units: 'Serial / kit number', unit_components: 'Kit component expiry', kit_components: 'Kit component', certifications: 'Certificate', locations: 'Location', departments: 'Service line', categories: 'Category', profiles: 'Person', memberships: 'Service-line membership', jobs: 'Materials request', job_lines: 'Materials request line', job_sections: 'Materials request line approval', change_batches: 'Request', counts: 'Monthly count', app_settings: 'Setting', report_signoffs: 'Report sign-off', sign_events: 'Document', documents: 'Document', signatures: 'Signature', plan_jobs: 'Planned job', item_prices: 'Price' };
 const FIELD_LABEL = { profile_id: 'Person', name: 'Description', code: 'Item code', min_qty: 'Reorder at', max_qty: 'Restock up to', item_type: 'Type', unit: 'Unit', supplier: 'Supplier', notes: 'Notes', active: 'Active', role: 'Access',
   state: 'Status', department_id: 'Service line', category_id: 'Category', is_kit: 'Redress kit', serial_no: 'Serial / kit no.', lot_no: 'Lot', expiry_on: 'Expiry', due_on: 'Due', cert_no: 'Certificate no.',
   title: 'Job', status: 'Status', requester_name: 'Requester', requester_id: 'Requester', main_admin: 'Main admin', backup_admin: 'Backup admin', full_name: 'Name', value: 'Value', qty: 'Qty', location_id: 'Location', decision_note: 'Note', kind: 'Kind', superseded: 'Superseded', job_title: 'Job title', signature_id: 'Signature', step: 'Step', document: 'Document', signature: 'Signature', removed_at: 'Removed', return_note: 'Return note', period_label: 'Period', ref: 'Ref', received_by_name: 'Receipt confirmed by', received_at: 'Receipt confirmed' };
@@ -353,7 +371,7 @@ ROUTES.audit = {
       const itemId = r.table_name === 'items' ? +r.record_id : data.item_id;
       const subject = r.summary || (itemId && its.get(+itemId)?.name) || (r.table_name === 'memberships' ? `${personName(data.profile_id, '')} · ${lineShort(data.department_id)}` : '') || `#${r.record_id}`;
       const verb = { insert: 'added', update: 'changed', delete: 'removed', signed: 'signed' }[r.action] || r.action;
-      return { at: r.at, who: r.user_name, line: r.department_id, what: `${AUDIT_NOUN[r.table_name] || r.table_name} ${verb}`, subject, changes, link: itemId ? `#/item/${itemId}` : r.table_name === 'report_signoffs' ? `#/signoff/${r.record_id}` : r.table_name === 'jobs' ? `#/job/${r.record_id}` : (r.table_name === 'job_sections' || r.table_name === 'job_lines') && data.job_id ? `#/job/${data.job_id}` : '',
+      return { fresh: AUD.fresh?.has(r.id), at: r.at, who: r.user_name, line: r.department_id, what: `${AUDIT_NOUN[r.table_name] || r.table_name} ${verb}`, subject, changes, link: itemId ? `#/item/${itemId}` : r.table_name === 'report_signoffs' ? `#/signoff/${r.record_id}` : r.table_name === 'jobs' ? `#/job/${r.record_id}` : (r.table_name === 'job_sections' || r.table_name === 'job_lines') && data.job_id ? `#/job/${data.job_id}` : '',
         detail: r.action !== 'update' ? Object.entries(data).filter(([k, v]) => !AUDIT_SKIP.includes(k) && v !== null && v !== '').slice(0, 6).map(([k, v]) => `${FIELD_LABEL[k] || k}: ${auditVal(k, v)}`).join(' · ') : '' };
     });
     const m = AUD.moves.map(x => ({ at: x.created_at, who: x.user_name, line: x.items?.department_id, what: 'Stock movement', subject: `${x.items?.code || ''} ${x.items?.name || ''}`.trim(), changes: [], link: `#/item/${x.item_id}`, detail: describeMove(x) + (x.notes ? ' · ' + x.notes : '') }));
@@ -365,7 +383,7 @@ ROUTES.audit = {
     if (!isAdmin()) return topbar('Audit log') + '<div class="notice">Only admins can see the audit log.</div>';
     await Promise.all([this.fetch(true), items()]);
     const people = Object.values(S.people).sort((a, b) => (a.full_name || a.email).localeCompare(b.full_name || b.email));
-    return topbar('Audit log', `Every change, who made it and when${isSuper() ? '' : ' (your service lines)'}. Item edits show the value before and after.`, `<button class="btn" id="xls">${ico('down')}Excel</button>`) + lineChips() +
+    return topbar('Audit log', `Every change, who made it and when${isSuper() ? '' : ' (your service lines)'}. Item edits show the value before and after.`, `<span class="live-dot" id="aud-live" title="New changes appear here as they happen">Live</span><button class="btn" id="xls">${ico('down')}Excel</button>`) + lineChips() +
       `<div class="filters"><select id="who"><option value="">Everyone</option>${people.map(p => opt(p.id, p.full_name || p.email, AUD.who)).join('')}</select>
         <select id="tbl"><option value="">All kinds of change</option>${Object.entries(AUDIT_TABLES).map(([k, v]) => opt(k, v, AUD.table)).join('')}</select>
         <input type="date" id="from" value="${esc(AUD.from)}" class="dateinp" aria-label="From"><input type="date" id="to" value="${esc(AUD.to)}" class="dateinp" aria-label="To">
@@ -378,11 +396,12 @@ ROUTES.audit = {
     const draw = () => {
       $$('#lines button', main).forEach(b => b.classList.toggle('on', b.dataset.l === S.line));
       const rows = this.feed();
-      $('#list', main).innerHTML = rows.length ? rows.slice(0, 600).map(r => `<li><div class="aud-who"><b>${esc(r.who || 'System')}</b><span class="sub">${fdt(r.at)}</span></div>
+      $('#list', main).innerHTML = rows.length ? rows.slice(0, 600).map(r => `<li class="${r.fresh ? 'fresh' : ''}"><div class="aud-who"><b>${esc(r.who || 'System')}</b><span class="sub">${fdt(r.at)}</span></div>
         <div class="aud-body"><div><span class="aud-what">${esc(r.what)}</span> ${r.link ? `<a href="${r.link}">${esc(r.subject)}</a>` : `<b>${esc(r.subject)}</b>`} ${r.line ? `<span class="linebadge">${esc(lineShort(r.line))}</span>` : ''}</div>
         ${r.changes.length ? `<div class="diffs">${r.changes.map(c => `<span class="diff"><span class="k">${esc(FIELD_LABEL[c.k] || c.k)}</span> <s>${esc(c.o)}</s> → <b>${esc(c.n)}</b></span>`).join('')}</div>` : ''}
         ${r.detail ? `<div class="sub">${esc(r.detail)}</div>` : ''}</div></li>`).join('') : '<li class="empty">Nothing recorded for these filters.</li>';
       $('#more', main).innerHTML = AUD.done ? '' : '<button class="btn" id="lm">Load older</button>';
+      $$('#list li.fresh', main).forEach(li => setTimeout(() => li.classList.remove('fresh'), 2500));
       const lm = $('#lm', main); if (lm) lm.onclick = async () => { lm.disabled = true; await this.fetch(false); draw(); };
     };
     const re = () => render({ quiet: true });
@@ -391,6 +410,7 @@ ROUTES.audit = {
     $('#from', main).onchange = e => { AUD.from = e.target.value; re(); };
     $('#to', main).onchange = e => { AUD.to = e.target.value; re(); };
     $('#q', main).oninput = debounce(e => { AUD.q = e.target.value; draw(); }, 150);
+    this.draw = draw; AUD.seenAt = Date.now(); auditLiveState();
     $('#xls', main).onclick = () => brandXlsx({ file: `GANKCO_Audit_log_${localISO(0)}.xlsx`, sheets: [{ name: 'Audit log', title: 'Audit log', subtitle: `${S.line ? lineName(S.line) : 'All service lines'}${AUD.who ? ' · ' + personName(AUD.who) : ''}`,
       columns: [{ header: 'When', key: 'at', width: 18 }, { header: 'Who', key: 'who', width: 20 }, { header: 'Service line', key: 'line', width: 13 }, { header: 'What', key: 'what', width: 26 }, { header: 'Record', key: 'subject', width: 40, wrap: true },
         { header: 'Before → after / details', key: 'det', width: 70, wrap: true }],
@@ -594,3 +614,34 @@ function fixEmail(p) {
     }
   });
 }
+
+// ---------------------------------------------------------------- live Audit log (2.7)
+// new rows arrive through the realtime channel; when the tab was in the background, it catches up on return
+function onAuditLive(p) {
+  if (!location.hash.startsWith('#/audit') || !ROUTES.audit.draw) return;
+  const r = p.new; if (!r || AUD.rows.some(x => x.id === r.id)) return;
+  if (AUD.who && r.user_id !== AUD.who) return;
+  if (AUD.table && AUD.table !== r.table_name) return;
+  if (AUD.to && r.at > AUD.to + 'T23:59:59') return;
+  (AUD.fresh ||= new Set()).add(r.id);
+  AUD.rows.unshift(r); ROUTES.audit.draw(); pulseLive();
+}
+function pulseLive() { const d = $('#aud-live'); if (d) { d.classList.remove('pulse'); void d.offsetWidth; d.classList.add('pulse'); } }
+function auditLiveState() {
+  const d = $('#aud-live'); if (!d) return;
+  const ok = S.channel && ['joined', 'SUBSCRIBED'].includes(S.channel.state);
+  d.classList.toggle('off', !ok); d.textContent = ok ? 'Live' : 'Reconnecting…';
+}
+setInterval(() => { if (location.hash.startsWith('#/audit')) auditLiveState(); }, 5000);
+document.addEventListener('visibilitychange', async () => {
+  if (document.visibilityState !== 'visible' || !location.hash.startsWith('#/audit') || !ROUTES.audit.draw || !AUD.rows.length) return;
+  // catch up on anything missed while the tab was hidden
+  try {
+    const newest = AUD.rows[0].at;
+    let a = sb.from('audit_log').select('*').gt('at', newest).order('at', { ascending: false }).limit(300);
+    if (AUD.who) a = a.eq('user_id', AUD.who); if (AUD.table && AUD.table !== 'stock') a = a.eq('table_name', AUD.table);
+    const rows = await q(a); const m = await q(sb.from('movements').select('*, items(code,name,department_id)').gt('created_at', AUD.moves[0]?.created_at || newest).order('created_at', { ascending: false }).limit(300));
+    const add = rows.filter(r => !AUD.rows.some(x => x.id === r.id));
+    if (add.length || m.length) { (AUD.fresh ||= new Set()); add.forEach(r => AUD.fresh.add(r.id)); AUD.rows.unshift(...add); AUD.moves.unshift(...m.filter(x => !AUD.moves.some(y => y.id === x.id))); ROUTES.audit.draw(); pulseLive(); toast(`${plural(add.length + m.length, 'change')} while you were away`); }
+  } catch (e) { /* the next render catches up */ }
+});

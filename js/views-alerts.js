@@ -31,7 +31,7 @@ const mWhen = d => { const x = new Date(d), n = new Date(); const same = x.toDat
   return same ? `today at ${mTime(d)}` : tmr ? `tomorrow at ${mTime(d)}` : `${x.toLocaleDateString('en-GB', { weekday: 'short', day: 'numeric', month: 'short' })} at ${mTime(d)}`; };
 const mBack = w => !w.back_by ? null : new Date(w.back_by) < new Date() ? 'late' : (new Date(w.back_by).toDateString() === new Date().toDateString() ? mTime(w.back_by) : `${new Date(w.back_by).toLocaleDateString('en-GB', { weekday: 'short', day: 'numeric', month: 'short' })}, ${mTime(w.back_by)}`);
 const mLen = w => { if (!w.back_by) return ''; const m = Math.round((new Date(w.back_by) - new Date(w.starts_at)) / 6e4); return m >= 90 ? `about ${Math.round(m / 60)} hours` : `about ${m} minutes`; };
-const maintSig = () => JSON.stringify([maintLocked('all')?.id, maintLocked('inventory')?.id, maintWin('inventory')?.id, maintWin('all')?.id,
+const maintSig = () => JSON.stringify([maintLocked('all')?.id, maintLocked('inventory')?.id, maintWin('inventory')?.id, maintWin('all')?.id, maintLocked('po')?.id, maintWin('po')?.id,
   mNoticeWins('launcher').map(w => w.id), S.maint.wins.map(w => w.id + ':' + w.back_by), maintExempt()]);
 
 // ================================================================ MAINTENANCE: what people see
@@ -39,7 +39,8 @@ const maintSig = () => JSON.stringify([maintLocked('all')?.id, maintLocked('inve
 function maintGate(r) {
   const all = maintLocked('all');
   if (all) { renderMaintScreen(all, 'all'); return true; }
-  if (r && r !== 'home') { const w = maintLocked('inventory'); if (w) { renderMaintScreen(w, 'inventory'); return true; } }
+  const app = r === 'po' ? 'po' : 'inventory';
+  if (r && r !== 'home') { const w = maintLocked(app); if (w) { renderMaintScreen(w, app); return true; } }
   S.maint.screen = null;
   return false;
 }
@@ -94,7 +95,7 @@ async function onMaintChange() {
   const wasScreen = S.maint.screen;
   await loadMaint();
   const sig = maintSig(); if (sig === S.maint.sig) return; S.maint.sig = sig;
-  if (wasScreen && !maintLocked(wasScreen === 'all' ? 'all' : 'inventory') && !maintLocked('all')) { location.reload(); return; }
+  if (wasScreen && !maintLocked(wasScreen) && !maintLocked('all')) { location.reload(); return; }
   if (!document.querySelector('dialog[open]')) render({ quiet: true });
 }
 function maintTick() {
@@ -187,7 +188,10 @@ async function alertsPanel() {
   let st = null; try { st = await q(sb.rpc('alert_status')); } catch (e) { st = null; }
   const s = st?.state || {};
   const recent = (st?.recent || []).slice(0, 8);
-  const res = r => r.error ? `<span class="neg">${esc(r.error)}</span>` : r.status_code == null ? '<span class="sub">Sending…</span>' : r.status_code < 300 ? '<span class="pos">Accepted by Brevo</span>' : `<span class="neg">Brevo said ${r.status_code}</span>`;
+  const why = r => { let m = ''; try { const j = JSON.parse(r.answer || ''); m = j.message || j.code || ''; } catch (e) { m = (r.answer || '').slice(0, 160); }
+    const hint = r.status_code === 401 ? 'The API key is wrong, or Brevo is blocking unknown IP addresses (Brevo → Security → Authorised IPs).' : r.status_code === 400 ? 'Brevo didn’t accept the email: check the sender address is verified in Brevo.' : r.status_code === 402 ? 'The Brevo account has run out of email credits.' : r.status_code === 429 ? 'Too many emails at once: Brevo will accept them again shortly.' : '';
+    return `${m ? `<div class="sub">Brevo: “${esc(m)}”</div>` : ''}${hint ? `<div class="sub">${esc(hint)}</div>` : ''}`; };
+  const res = r => r.error ? `<span class="neg">${esc(r.error)}</span>` : r.status_code == null ? '<span class="sub">Sending…</span>' : r.status_code < 300 ? '<span class="pos">Accepted by Brevo</span>' : `<span class="neg">Brevo said ${r.status_code}</span>${why(r)}`;
   const ppl = Object.values(S.people).filter(p => !['pending', 'disabled'].includes(p.role)).sort((x, y) => (x.full_name || x.email).localeCompare(y.full_name || y.email));
   return `<section class="panel" id="alerts"><header><h2>Alert emails</h2>${!a.enabled ? chip('muted', 'Paused') : a.test_mode ? chip('pending', 'Test mode') : chip('ok', 'On for everyone')}</header><div class="body">
     <p class="muted">A morning email at <b>7:30 am, Monday to Friday</b> with each person’s own to-dos, and a <b>Monday</b> email with low stock and faulty items (Management get a weekly summary). Sent from nest-alerts@gankcoenergy.com. Nobody gets an empty email.</p>

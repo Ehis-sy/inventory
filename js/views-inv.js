@@ -213,6 +213,8 @@ ROUTES.inventory = {
       ${canMove ? `<button class="btn small" id="b-move">${ico('move')}Move location</button>` : ''}
       ${isAdmin() ? `<button class="btn small" id="b-labels">${ico('print')}Print labels</button>` : ''}
       ${canEdit ? '<button class="btn small" id="b-edit">Edit details</button>' : ''}
+      ${canEdit ? (S.inv.view === 'archived' ? '<button class="btn small" id="b-restore">Restore</button>' : '<button class="btn small" id="b-archive">Archive</button>') : ''}
+      ${canEdit ? `<button class="btn small link danger" id="b-del">${ico('trash')}Delete</button>` : ''}
       <button class="btn small" id="b-clear">Clear</button></div>` : '';
     if (!n) return;
     $('#b-clear', b).onclick = () => { S.inv.sel.clear(); this.draw(main); };
@@ -220,6 +222,9 @@ ROUTES.inventory = {
     const e = $('#b-edit', b); if (e) e.onclick = () => bulkEdit([...S.inv.sel]);
     const m = $('#b-move', b); if (m) m.onclick = () => bulkMove(selItems);
     $('#b-mr', b).onclick = () => addSelectedToRequest(selItems);
+    const ar = $('#b-archive', b); if (ar) ar.onclick = () => bulkArchive(selItems, false);
+    const rs = $('#b-restore', b); if (rs) rs.onclick = () => bulkArchive(selItems, true);
+    const dl = $('#b-del', b); if (dl) dl.onclick = () => bulkDelete(selItems);
   },
   drawEditBar(main) {
     const f = S.inv; const bar = $('#editbar', main); if (!bar) return;
@@ -884,4 +889,35 @@ function bindItemExtras(main, c) {
       onSubmit: async x => { await q(sb.rpc('set_service_rule', { p_items: [it.id], p_months: x.svc ? +x.svc : null })); toast(x.svc ? 'Rule saved' : 'Rule removed'); refresh(); } }),
   };
   $$('[data-x2]', main).forEach(b => b.onclick = () => A[b.dataset.x2]());
+}
+
+// ---------------------------------------------------------------- 2.7: archive / restore several items, delete items added by mistake
+function bulkArchive(list, restore) {
+  return modal({
+    title: restore ? `Restore ${plural(list.length, 'item')}` : `Archive ${plural(list.length, 'item')}`, submit: restore ? 'Restore' : 'Archive',
+    sub: restore ? 'They come back into the lists, counts and reports.' : 'Archived items disappear from the lists, monthly counts and reports, but keep all their history. You can restore them from the Archived filter at any time.',
+    body: `<ul class="list compact">${list.slice(0, 12).map(i => `<li>${tag(i.code)} ${esc(i.name)}${!restore && +i.qty_total ? ` <span class="sub">· ${fq(i.qty_total)} still counted in stock</span>` : ''}</li>`).join('')}${list.length > 12 ? `<li class="sub">and ${list.length - 12} more</li>` : ''}</ul>
+      ${!restore && list.some(i => +i.qty_total) ? '<div class="notice">Some of these still have stock. Archiving doesn’t change the stock; it only hides the item.</div>' : ''}`,
+    onSubmit: async () => {
+      const n = await q(sb.rpc('set_items_active', { p_ids: list.map(i => i.id), p_active: !!restore }));
+      S.inv.sel.clear(); invalidate(); toast(`${plural(n, 'item')} ${restore ? 'restored' : 'archived'}`); render({ quiet: true });
+    }
+  });
+}
+async function bulkDelete(list) {
+  return modal({
+    title: `Delete ${plural(list.length, 'item')}`, submit: 'Delete', danger: true,
+    sub: 'Only for items added by mistake. An item that has ever had stock movements, requests, counts, certificates or planner links can’t be deleted: archive it instead. Deleting can’t be undone.',
+    body: `<ul class="list compact">${list.slice(0, 12).map(i => `<li>${tag(i.code)} ${esc(i.name)}</li>`).join('')}${list.length > 12 ? `<li class="sub">and ${list.length - 12} more</li>` : ''}</ul><div id="bd-out"></div>`,
+    onSubmit: async (x, d) => {
+      const done = [], kept = [];
+      for (const i of list) { try { await q(sb.rpc('delete_unused_item', { p_item: i.id })); done.push(i); } catch (e) { kept.push({ i, why: niceError(e) }); } }
+      S.inv.sel.clear(); invalidate();
+      if (kept.length) {
+        render({ quiet: true });
+        setTimeout(() => modal({ title: done.length ? `Deleted ${plural(done.length, 'item')}` : 'Nothing was deleted', submit: '', cancel: 'Close',
+          body: `<p>${plural(kept.length, 'item')} couldn’t be deleted because ${kept.length === 1 ? 'it has' : 'they have'} been used in Nest. Archive ${kept.length === 1 ? 'it' : 'them'} instead.</p><ul class="list compact">${kept.map(k => `<li>${tag(k.i.code)} ${esc(k.i.name)}<div class="sub">${esc(k.why.replace(/\. It can.*$/, ''))}</div></li>`).join('')}</ul>` }), 0);
+      } else { toast(`${plural(done.length, 'item')} deleted`); render({ quiet: true }); }
+    }
+  });
 }

@@ -1,4 +1,4 @@
-# GANKCO Nest: version 2.6.2 update
+# GANKCO Nest: version 2.7 update
 
 *Built to support engineered solutions.*
 
@@ -8,6 +8,52 @@
 - **Database and sign-in:** Supabase project in the **GANKCO Energy Services** organization (Nest Gmail; Ehis also an Owner).
 - **Emails:** sent by Brevo from **nest-alerts@gankcoenergy.com** as "GANKCO Nest". Sign-in emails use Supabase's custom SMTP (templates in Supabase → Authentication → Emails → Templates). Alert emails use the Brevo API key saved in Supabase Vault as `brevo_api_key`, on a schedule (pg_cron).
 - **DNS (company IT):** `nest` CNAME → `gankco-energy.github.io`, plus the Brevo verification records.
+
+## Install 2.7 (about 10 minutes)
+
+1. **Lock Nest:** **Settings → Maintenance → Schedule maintenance → All of Nest → Start now**.
+2. **Supabase → SQL Editor → New query:** paste all of **`10-nest-v2.7-upgrade.sql`** and press **Run**. It should end with **Nest 2.7 installed**. It's safe to run again.
+3. **GitHub:** unzip **`gankco-nest-v2.7.zip`** and upload everything into **github.com/gankco-energy/gankco-nest**, then commit. Keep the `CNAME` file.
+4. Reload Nest (**Ctrl + Shift + R**). On the Nest home screen, the **Purchase Order** tile is now live.
+5. **Check, as the Super Admin:**
+   - **Purchase Order → PO settings:** the company name, both office addresses, and **Next PO number: 10038**.
+   - **Team:** the new **Purchase Order** column. Everyone is switched on at first; switch it off for anyone who shouldn't raise POs.
+   - **Team → Who can receive PO deliveries:** switch it on for any storekeeper.
+6. **Raise one test PO**, then press **End maintenance**. (If you don't want to keep the test PO, cancel it: its number is never reused. Or keep it as a draft and delete it, which uses no number.)
+
+### What's new in 2.7
+
+**Purchase Order app**
+
+- **Raise a PO:** pick the service line and sub service line, then the supplier. A saved supplier fills in its address and phone; a new one is saved the first time it's issued.
+- **The PO sheet has every field of your Excel PO:** Name, Address, Phone, PAN, GSTIN, P.O. date, P.O. number, delivery date, the lines (S.No., part number, item name, HSN/SAC, qty, UOM, rate, amount), totals, amount in words, note, GST tax summary, terms, and the signature. Blank fields print empty, as on the sample. **Deliver To** is a new line under GSTIN: Abuja office, Port Harcourt office, or blank.
+- **Currency:** USD, NGN, GBP or EUR, with the amount in words in that currency.
+- **Tax isn't worked out:** type the tax amount if the supplier charges it. Nest adds up the lines and adds the tax you typed.
+- **Section headings** (A, B, C…) like the SHO Assy & RBP PO, with lines numbered 1, 2, 3 under each.
+- **Lines can come from:** typing, **Pick from Inventory** (part number, name and unit fill in), **Read a supplier quote** (Excel or a PDF with selectable text), **Paste from an AI chat** (free: works with any quote, including scans), or the **Job planner's Ship-in list** (**Create purchase order**). They can be mixed. The quote file is kept with the PO.
+- **Terms:** optional, one per line. Terms used before can be picked again.
+- **Sign & issue:** the raiser's signature is the approval. The number is given at that moment: **GES-WI-PO-10038-2026**, one running number for every line (WI, WEO, PEO, WHS) that carries on across years. The Super Admin gets a bell notification for every issued PO.
+- **PDF and Excel copies:** the Excel is built cell for cell from your Sand Screens sheet; the PDF has the same layout.
+- **Revise:** keeps the number and adds **-R1, -R2**, with a short reason, signed again. Every earlier version is kept, marked Superseded, and can be downloaded again exactly as it was signed.
+- **Cancel** with a reason (only before anything is received). Issued POs can't be deleted; drafts can.
+- **Receive goods:** the Inventory line's admin (or staff they allow) records deliveries against the PO. Linked items go into stock at the chosen location and their price updates from the PO. Status goes Issued → Partly received → Received. Linked items show **On order** until the goods arrive.
+- **PO history:** search and filter by service line, sub line, supplier, year, status and currency, with totals per currency and an Excel export.
+- **Add an old PO:** for POs sent before Nest, with the original file attached.
+- **Suppliers** page to correct details, and **PO settings** for the company name, addresses and next number (Super Admin).
+- **Leaving the PO sheet** with unsaved changes saves the draft quietly.
+- Works with the maintenance lock (**Purchase Order** on its own, or all of Nest), the Audit log and backups.
+
+**Smaller items**
+
+- **Sign-in page:** shows a notice when Nest is under maintenance, or about to be.
+- **Settings → Alert emails → Recent emails:** when Brevo refuses an email, its reason is shown with a hint (for example, a wrong API key or blocked IP addresses).
+- **Audit log is live:** new changes appear as they happen, with a **Live** dot. If the tab was in the background, it catches up when you come back.
+- **Job planner:** "Left after jobs" is now **Complete BHAs after all upcoming jobs** ("After every active job on the list takes its parts"), and "Above / (below) target" is now **Compared with safety target**, on the Summary tab, the PDF and the Excel.
+- **Inventory:** tick items and press **Archive** (or **Restore** on the Archived filter). **Delete** removes items added by mistake that were never used; anything used in Nest has to be archived instead, and Nest says what it was used in.
+
+---
+
+# Earlier: version 2.6.2 update
 
 ## Install 2.6.2 (about 5 minutes)
 
