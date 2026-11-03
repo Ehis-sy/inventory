@@ -688,3 +688,9 @@ table.t tfoot tr.totalrow td { border-top: 2px solid var(--ink); background: #f3
   .pjf-main, .pjf-side { min-width: 0; }
   .pjf-bha select.inline { width: 100px; }
 }
+
+/* 2.4 credit line */
+.auth-col { width: min(390px, 100%); display: flex; flex-direction: column; align-items: stretch; }
+.auth-col > form, .auth-col > .card { width: 100%; }
+.auth-form .credit { margin: 18px 0 0; text-align: center; font-size: 12px; color: #8E9196; letter-spacing: .02em; }
+.l-foot .credit { color: #6E7277; font-size: 12px; }

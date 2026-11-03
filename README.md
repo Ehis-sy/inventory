@@ -2,10 +2,17 @@
 
 *Built to support engineered solutions.*
 
+## Where things live
+
+- **Website:** nest.gankcoenergy.com, hosted on GitHub Pages from **github.com/gankco-energy/gankco-nest** (organization owned by the Nest Gmail; Ehis is also an Owner).
+- **Database and sign-in:** Supabase project in the **GANKCO Energy Services** organization (Nest Gmail; Ehis also an Owner).
+- **Emails:** sent by Brevo from **nest-alerts@gankcoenergy.com** as "GANKCO Nest", using Supabase's custom SMTP. The branded templates are in Supabase → Authentication → Emails → Templates.
+- **DNS (company IT):** `nest` CNAME → `gankco-energy.github.io`, plus the Brevo verification records.
+
 ## Install 2.4 (about 5 minutes)
 
 1. **Supabase → SQL Editor → New query:** paste all of **`5-nest-v2.4-upgrade.sql`** and press **Run**. Wait for **Success**. It's safe to run again.
-2. **GitHub:** unzip **`gankco-nest-v2.4.zip`** and upload everything from the folder into your `gankco-nest` repository (renamed from `inventory`) (**Add file → Upload files**), then commit. Keep the `CNAME` file.
+2. **GitHub:** unzip **`gankco-nest-v2.4.zip`** and upload everything from the folder into **github.com/gankco-energy/gankco-nest** (**Add file → Upload files**), then commit. Keep the `CNAME` file.
 3. After 1–2 minutes, anyone with Nest open sees **"A new version is available: Reload"**.
 
 ## After installing
@@ -14,9 +21,11 @@
 2. **Fix two item codes:** the 2-7/8" Paragon II Packer is coded `GEST-TT-…` (typo), and `GES-TT-DHT-SCRN-150-0001DS` is used for both the 200µ and 230µ 1-1/2" screens. Give one of them a new code.
 3. **Prices:** fill in the parts that show "no price" (for example the blanks, PCMs and EMSTs). Either press **Edit price** on a line of the **Ship-in list**, or use **Setup → Prices** for the full list.
 4. **Management:** on the **Team** page, set managers' access to **Management**.
+5. **Second Super Admin:** make one trusted person a Super Admin too, so Nest never depends on one account.
 
 ## What's new in 2.4
 
+- **Credit line:** "Designed and built by Ehigie Momodu" on the sign-in page, the launcher footer and **My account → About Nest**. It isn't printed on PDFs, Excel files or labels.
 - **Job planner** (menu → Job planner, for everyone). Your "Inventory vs Job Tracker" Excel, built into Nest for Thru-Tubing screen hang-off BHAs:
   - **Add upcoming job:** a job sheet with three sections (Job, String, BHA make-up) and a **Stock check** panel on the right that updates as you type. Each BHA row shows how many are free on the shelf for this job (✔ or ✖), plus the job's place in the date order.
   - **The jobs list** shows a **Ready** or **Short N parts** badge on each job, with the missing parts underneath.

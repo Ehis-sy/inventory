@@ -459,6 +459,8 @@ ROUTES.account = {
         ${sigBox(await mySigImage(), 'big')}
         <div class="actionrow mt"><button class="btn primary" id="sigup">${ico('up')}${p.signature_id ? 'Replace signature' : 'Upload signature'}</button>${p.signature_id ? '<button class="btn danger" id="sigrm">Remove</button>' : ''}</div>
         <p class="sub">Tip: sign on plain white paper with a dark pen, then take a straight photo in good light or scan it.</p></div></section>
+      <section class="panel"><header><h2>About Nest</h2></header><div class="body">
+        <dl class="kv"><dt>App</dt><dd>${esc(CFG.APP_NAME)} v${esc(CFG.VERSION || '')}</dd><dt>Company</dt><dd>${esc(CFG.COMPANY || '')}</dd><dt>Credit</dt><dd>${esc(CREDIT)}</dd></dl></div></section>
       <button class="btn" id="out">Sign out</button>`;
   },
   bind(main) {

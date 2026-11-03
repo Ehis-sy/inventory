@@ -357,6 +357,8 @@ async function boot() {
   render();
 }
 
+const CREDIT = 'Designed and built by Ehigie Momodu';
+
 function authShell(inner) {
   $('#app').innerHTML = `<div class="auth">
     <div class="auth-art">
@@ -364,7 +366,7 @@ function authShell(inner) {
       <div class="lockup">${wordmark()}<div class="sublock">NEST</div>
         <div class="motto">${esc(CFG.TAGLINE || '')}</div></div>
       <div class="foot"><span>${esc(CFG.COMPANY || '')} · ${esc(CFG.MOTTO || '')}</span></div></div>
-    <div class="auth-form">${inner}</div></div>`;
+    <div class="auth-form"><div class="auth-col">${inner}<p class="credit">${esc(CREDIT)}</p></div></div></div>`;
 }
 
 function renderAuth(mode = 'signin', message = '', ok = false) {
@@ -551,7 +553,7 @@ async function renderLauncher() {
       <div class="tile soon"><span class="t-ico">${ico('chart')}</span><span class="t-name">Proforma Invoices &amp; Quotes</span>
         <span class="t-desc">Prepare quotes and proforma invoices for clients.</span><span class="t-meta">Coming later</span></div>
     </section>
-    <footer class="l-foot">${esc(CFG.COMPANY || '')} · ${esc(CFG.MOTTO || '')}<br><span>${esc(CFG.APP_NAME)} v${esc(CFG.VERSION || '')}</span></footer></div>`;
+    <footer class="l-foot">${esc(CFG.COMPANY || '')} · ${esc(CFG.MOTTO || '')}<br><span>${esc(CFG.APP_NAME)} v${esc(CFG.VERSION || '')} · <span class="credit">${esc(CREDIT)}</span></span></footer></div>`;
   $('#out').onclick = () => sb.auth.signOut(); $('#bell').onclick = openBell;
   const va = $('#viewas'); if (va) va.onclick = openViewAs; bindViewAs();
   document.body.classList.toggle('viewing-as', !!(S.viewAs && realSuper()));
