@@ -7,6 +7,7 @@ const sb = window.supabase.createClient(CFG.SUPABASE_URL, CFG.SUPABASE_ANON_KEY,
 
 // ---------------------------------------------------------------- state
 const S = {
+  orders: {}, ordersAt: 0,
   session: null, profile: null, recovery: false,
   depts: [], cats: [], locs: [], people: {}, members: [], settings: {},
   items: null, stock: null, pending: 0, alerts: { unread: 0, reminders: [] },
@@ -70,7 +71,7 @@ const VIEW_MSG = 'You’re viewing Nest as another role, so changes are switched
 const MGMT_MSG = 'Management access is view-only, so changes are switched off.';
 const readOnly = () => !!S.viewAs || realRole() === 'management';
 (() => {
-  const READ_RPC = new Set(['month_totals', 'period_flows', 'mark_notifications_read', 'log_signed_export']);
+  const READ_RPC = new Set(['month_totals', 'period_flows', 'mark_notifications_read', 'log_signed_export', 'save_plan_snapshot', 'alert_status', 'preview_alert']);
   const blocked = () => { const msg = S.viewAs ? VIEW_MSG : MGMT_MSG; const p = new Proxy(function () { }, { get: (t, k) => k === 'then' ? (res => res({ data: null, error: { message: msg } })) : () => p, apply: () => p }); return p; };
   const _rpc = sb.rpc.bind(sb), _from = sb.from.bind(sb);
   sb.rpc = (fn, args, opts) => (readOnly() && !READ_RPC.has(fn) && !(fn === 'log_signed_export' && S.viewAs)) ? blocked() : _rpc(fn, args, opts);
@@ -220,7 +221,14 @@ async function stockRows(force = false) {
 function stockOf(itemId, locId, status = 'available') {
   return +((S.stock || []).find(s => s.item_id === itemId && s.location_id === +locId && s.status === status)?.qty || 0);
 }
-function invalidate() { S.items = null; S.stock = null; S.plan = null; }
+function invalidate() { S.items = null; S.stock = null; S.plan = null; S.ordersAt = 0; }
+// items marked On order (2.6), keyed by item id
+async function loadOrders() {
+  if (S.ordersAt && Date.now() - S.ordersAt < 60000) return S.orders;
+  try { const r = await q(sb.from('item_orders').select('*')); S.orders = Object.fromEntries(r.map(o => [o.item_id, o])); S.ordersAt = Date.now(); } catch (e) { S.orders = S.orders || {}; }
+  return S.orders;
+}
+const fdm = d => d ? new Date(String(d).length === 10 ? d + 'T00:00:00' : d).toLocaleDateString('en-GB', { day: 'numeric', month: 'short' }) : '';
 const lineFilter = arr => S.line ? arr.filter(x => x.department_id === +S.line) : arr;
 
 // ---------------------------------------------------------------- alerts (bell)
@@ -311,9 +319,10 @@ function subscribe() {
   }, 900);
   try {
     S.channel = sb.channel('nest-live');
-    ['stock', 'checkouts', 'movements', 'change_batches', 'items', 'counts', 'jobs', 'job_sections', 'report_signoffs', 'plan_jobs'].forEach(t =>
+    ['stock', 'checkouts', 'movements', 'change_batches', 'items', 'counts', 'jobs', 'job_sections', 'report_signoffs', 'plan_jobs', 'item_orders', 'service_log'].forEach(t =>
       S.channel.on('postgres_changes', { event: '*', schema: 'public', table: t }, onChange));
     S.channel.on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'notifications' }, () => refreshAlerts());
+    S.channel.on('postgres_changes', { event: '*', schema: 'public', table: 'maintenance_windows' }, () => typeof onMaintChange === 'function' && onMaintChange());
     S.channel.subscribe();
   } catch (e) { console.warn('Live updates unavailable', e); }
   setInterval(refreshAlerts, 5 * 60 * 1000);
@@ -351,11 +360,13 @@ async function boot() {
   if (!isActive()) return renderPending();
   if (S.viewAs && !realSuper()) setViewAs(null);
   try { await loadLookups(); } catch (e) { return renderAuth('signin', niceError(e)); }
+  if (typeof loadMaint === 'function') { await loadMaint(); S.maint.sig = maintSig(); }
   if (!isSuper() && !S.depts.some(d => +S.line === d.id)) setLine('');
   if (!S.line && !isSuper() && !isAdmin()) { const m = myLineIds(); if (m.length === 1) setLine(m[0]); }
   refreshAlerts(); subscribe(); checkVersion();
   S.shellReady = false;
   render();
+  setTimeout(() => { if (typeof refreshPlanSnapshot === 'function' && !S.viewAs) refreshPlanSnapshot(); }, 8000);
 }
 
 const CREDIT = 'Designed and built by Ehigie Momodu';
@@ -500,6 +511,7 @@ async function render(opts = {}) {
   if (typeof stopScanner === 'function') stopScanner();
   const { parts, params } = parseHash();
   const r = parts[0] || '';
+  if (typeof maintGate === 'function' && maintGate(r)) return;
   if (r === '' || r === 'home') { S.shellReady = false; return renderLauncher(); }
   if (S.inv.edit && r !== 'inventory') { S.inv.edit = false; S.inv.changes.clear(); }
   shell();
@@ -511,7 +523,8 @@ async function render(opts = {}) {
   try {
     const html = await view.load(parts, params);
     if (seq !== renderSeq) return;
-    main.innerHTML = html + `<div class="pagefoot">${esc(CFG.APP_NAME)} · ${esc(CFG.TAGLINE || '')} · v${esc(CFG.VERSION || '')}</div>`;
+    main.innerHTML = (typeof maintBars === 'function' ? maintBars('inventory', true) : '') + html + `<div class="pagefoot">${esc(CFG.APP_NAME)} · ${esc(CFG.TAGLINE || '')} · v${esc(CFG.VERSION || '')}</div>`;
+    if (typeof bindMaintBars === 'function') bindMaintBars(main);
     view.bind && view.bind(main, parts, params);
     if (opts.quiet) window.scrollTo(0, y); else window.scrollTo(0, 0);
   } catch (e) {
@@ -535,10 +548,18 @@ function bindLineChips(main, cb, id = 'lines') {
 }
 
 // ---------------------------------------------------------------- launcher (Nest home)
+// One app tile; shows the maintenance state when that app (or all of Nest) is locked
+function appTile(scope, href, icon, name, desc, meta, live) {
+  const m = typeof maintTile === 'function' ? maintTile(scope) : null;
+  const inner = `<span class="t-ico">${ico(icon)}</span><span class="t-name">${name}</span><span class="t-desc">${desc}</span>`;
+  if (m && m.cls === 'maint') return `<div class="tile maint" aria-disabled="true">${inner}<span class="t-meta">${m.meta}</span>${m.badge}</div>`;
+  if (m) return href ? `<a class="tile live maint-open" href="${href}">${inner}<span class="t-meta">${m.meta}</span>${m.badge}</a>` : `<div class="tile soon">${inner}<span class="t-meta">${m.meta}</span>${m.badge}</div>`;
+  return live && href ? `<a class="tile live" href="${href}">${inner}${meta}</a>` : `<div class="tile soon">${inner}${meta}</div>`;
+}
 async function renderLauncher() {
   const p = S.profile; const first = S.viewAs ? '' : (p.full_name || '').split(' ')[0];
   const apps = p.apps || ['inventory'];
-  $('#app').innerHTML = `${viewAsBar()}<div class="launcher">
+  $('#app').innerHTML = `${viewAsBar()}<div class="launcher">${typeof maintBars === 'function' ? maintBars('launcher') : ''}
     <header class="l-top"><a class="brand" href="#/"><img src="brand/mark-96.png" alt=""><span class="brand-name">${wordmark()}<small>Nest</small></span></a>
       <div class="l-right">${isAdmin() ? `<a class="btn small ghost" href="#/team">${ico('users')}Team &amp; access</a>` : ''}${realSuper() ? `<button class="btn small ghost" id="viewas">${S.viewAs ? 'Change view' : 'View as…'}</button>` : ''}<button class="bell inline" id="bell" aria-label="Notifications">${ico('bell')}<span class="bell-count" hidden></span></button>
       <a class="btn small ghost" href="#/account">${esc(p.full_name || p.email)}</a><button class="btn small ghost" id="out">Sign out</button></div></header>
@@ -546,16 +567,13 @@ async function renderLauncher() {
       <div><div class="l-tag">${esc(CFG.TAGLINE || '')}</div><h1>${first ? `Welcome back, ${esc(first)}` : 'Welcome'}</h1>
       <p>Where would you like to go?</p></div></section>
     <section class="tiles">
-      ${apps.includes('inventory') ? `<a class="tile live" href="#/dashboard"><span class="t-ico">${ico('box')}</span><span class="t-name">Inventory</span>
-        <span class="t-desc">Equipment, stock, materials requests, monthly counts and reports.</span>
-        <span class="t-meta" id="invMeta">Open</span></a>` : ''}
-      <div class="tile soon"><span class="t-ico">${ico('audit')}</span><span class="t-name">Purchase Orders</span>
-        <span class="t-desc">Raise and track purchase orders to OEMs and suppliers.</span><span class="t-meta">Coming later</span></div>
-      <div class="tile soon"><span class="t-ico">${ico('chart')}</span><span class="t-name">Proforma Invoices &amp; Quotes</span>
-        <span class="t-desc">Prepare quotes and proforma invoices for clients.</span><span class="t-meta">Coming later</span></div>
+      ${apps.includes('inventory') ? appTile('inventory', '#/dashboard', 'box', 'Inventory', 'Equipment, stock, materials requests, monthly counts and reports.', '<span class="t-meta" id="invMeta">Open</span>', true) : ''}
+      ${appTile('po', null, 'audit', 'Purchase Order', 'Raise and track purchase orders to OEMs and suppliers.', '<span class="t-meta">Coming later</span>')}
+      ${appTile('proforma', null, 'chart', 'Proforma Invoice &amp; Quote', 'Prepare quotes and proforma invoices for clients.', '<span class="t-meta">Coming later</span>')}
     </section>
     <footer class="l-foot">${esc(CFG.COMPANY || '')} · ${esc(CFG.MOTTO || '')}<br><span>${esc(CFG.APP_NAME)} v${esc(CFG.VERSION || '')} · <span class="credit">${esc(CREDIT)}</span></span></footer></div>`;
   $('#out').onclick = () => sb.auth.signOut(); $('#bell').onclick = openBell;
+  if (typeof bindMaintBars === 'function') bindMaintBars($('#app'));
   const va = $('#viewas'); if (va) va.onclick = openViewAs; bindViewAs();
   document.body.classList.toggle('viewing-as', !!(S.viewAs && realSuper()));
   await refreshAlerts();

@@ -1,14 +1,63 @@
-# GANKCO Nest: version 2.5 update
+# GANKCO Nest: version 2.6 update
 
 *Built to support engineered solutions.*
 
 ## Where things live
 
 
+
 - **Website:** nest.gankcoenergy.com, hosted on GitHub Pages from **github.com/gankco-energy/gankco-nest** (organization owned by the Nest Gmail; Ehis is also an Owner).
 - **Database and sign-in:** Supabase project in the **GANKCO Energy Services** organization (Nest Gmail; Ehis also an Owner).
-- **Emails:** sent by Brevo from **nest-alerts@gankcoenergy.com** as "GANKCO Nest", using Supabase's custom SMTP. The branded templates are in Supabase → Authentication → Emails → Templates.
+- **Emails:** sent by Brevo from **nest-alerts@gankcoenergy.com** as "GANKCO Nest". Sign-in emails use Supabase's custom SMTP (templates in Supabase → Authentication → Emails → Templates). Alert emails use the Brevo API key saved in Supabase Vault as `brevo_api_key`, on a schedule (pg_cron).
 - **DNS (company IT):** `nest` CNAME → `gankco-energy.github.io`, plus the Brevo verification records.
+
+## Install 2.6 (about 15 minutes, once)
+
+**From the next update on,** lock Nest first: **Settings → Maintenance → Schedule maintenance → All of Nest → Start now**, then run the SQL and upload, check Nest as a tester, and press **End maintenance**.
+
+1. **Supabase → SQL Editor → New query:** paste all of **`7-nest-v2.6-upgrade.sql`** and press **Run**. Wait for **Success**. It's safe to run again.
+2. **GitHub:** unzip **`gankco-nest-v2.6.zip`** and upload everything from the folder into **github.com/gankco-energy/gankco-nest** (**Add file → Upload files**), then commit. Keep the `CNAME` file.
+3. After 1–2 minutes, anyone with Nest open sees **"A new version is available: Reload"**.
+
+### Switch on the alert emails (one time)
+
+1. **Check the schedule is on.** In Supabase, open **Database → Extensions** and make sure **pg_cron** and **pg_net** are switched on. If you had to switch either on, run the 2.6 SQL file again.
+2. **Make a Brevo API key.** In Brevo, open the menu at the top right → **SMTP & API** → **API Keys** tab → **Generate a new API key**, name it **Nest alerts**. Copy it. This is a different key from the SMTP key Supabase already uses. **Don't paste it into a chat or email.**
+3. **Save it in Supabase Vault.** In Supabase, open **Vault** (under Integrations, or search "Vault") → **Add new secret**. Name: **`brevo_api_key`**. Secret: paste the key. Save.
+4. **Check it in Nest.** Go to **Settings → Alert emails**. **Brevo API key** and **Schedule** should both show ✔.
+5. **Send yourself a test.** In **Try it**, pick yourself and **Daily**, then **Send to me now**. Check your inbox (and spam the first time). Try **Preview** for other people to see what they'll get.
+6. **Test week.** Leave **Test mode** on for a week: only you receive the 7:30 am emails. When you're happy, turn **Test mode** off and press **Save**. Everyone then gets theirs.
+
+If **Recent emails** shows "Brevo said 401", open Brevo → **Security → Authorised IPs** and turn off blocking of unknown IP addresses (Supabase sends from changing addresses).
+
+## After installing
+
+1. **Servicing rules:** for tools that must be serviced when idle, open the item → **Servicing → Set a rule** (or tick several items on Inventory → **Edit details** → *Service if idle on the shelf*).
+2. **Testers:** **Settings → Maintenance → Choose testers** (for example Lydia).
+3. **On order:** when you order something, open the item → **Mark on order**, with the quantity and expected date.
+
+## What's new in 2.6
+
+- **Alert emails** from nest-alerts@gankcoenergy.com, in the Nest email design:
+  - **Daily at 7:30 am, Monday to Friday**, per person, in three groups. **Act today:** materials requests to approve and issue, approvals waiting (marked in red after 2 working days), reports to sign or returned, receipts to confirm, items overdue back, the monthly count (open or late), the monthly report to submit once the count is approved, new sign-ups, overdue certificates, expired kits, tools due for service, the monthly backup (Super Admin), and drafts left for more than 3 days. **Coming up:** certificates and kits due soon, items due back this week, servicing due within 30 days, Job planner jobs in the next 14 days that are short, and the count opening soon. **For your information:** items that fell below reorder level since yesterday, items newly marked faulty or damaged, and, on the first working day of the month, housekeeping (items with no location, no reorder level, certificates with no due date, planner parts with no price).
+  - **Staff** only get their own items. Nobody gets an empty email.
+  - **Monday 7:35 am:** admins get low stock split into *not ordered yet* and *on order* (late deliveries in red) plus everything faulty and not yet repaired. **Management** get a weekly summary: headline numbers, upcoming planner jobs (Ready or Short), the estimated ship-in cost and reports signed off that week.
+  - **Settings → Alert emails** (Super Admin): on/off, test mode, status, **Preview** and **Send to me now** for anyone, and the last emails sent with Brevo's answer.
+  - **My account → Email alerts:** anyone can turn their own emails off.
+- **Maintenance lock** (Settings → Maintenance, Super Admin):
+  - Lock **All of Nest** or a single app (Inventory, Purchase Order, Proforma Invoice & Quote), now or at a set time, with a message and a back-by time. **+15 min / +30 min** while it's on, and **End maintenance**.
+  - **Heads-up banner** before it starts (30 minutes to 1 day before).
+  - People see a branded maintenance screen (all of Nest) or a locked tile and app screen (one app). It happens within seconds for anyone already in Nest, and their page comes back by itself when you end it.
+  - The database refuses changes while it's on, not just the screen. The Super Admin and chosen **testers** can still use Nest, with a bar saying maintenance is on.
+- **Tool servicing:** an idle rule per item ("service if idle 12 months"). The item page shows last used, last serviced and next service, with **Mark serviced** and a service history. Reminders go in the alert emails.
+- **On order:** mark an item on order with quantity, expected date and a note (for example the PO number). It shows on the item, the dashboard's restocking list and the Monday email, and clears itself when the stock is received.
+- **Prices on every item:** the item page shows the unit price (USD or NGN) to admins, the Super Admin and Management, and admins can edit it. Staff still never see prices.
+- **Job planner → Setup → Add part:** add BHA components, service tools, blank lengths or screen sizes beyond the original 20, then link them to Nest items. Existing jobs aren't affected (a new component counts as 0 on them until you edit the job).
+- **App names:** Purchase Order and Proforma Invoice & Quote.
+
+---
+
+# Earlier: version 2.5 update
 
 ## Install 2.5 (about 3 minutes)
 

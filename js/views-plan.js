@@ -4,6 +4,10 @@
 const PL = { tab: 'jobs', view: 'active' };
 const PLAN_STATUS = { planned: ['pending', 'Planned'], hold: ['muted', 'On hold'], run: ['ok', 'Run'], cancelled: ['muted', 'Cancelled'] };
 const QTY_FIELDS = [['packer', 'Paragon II Packer'], ['xo', 'Hang-off Crossover'], ['sj', 'Safety Joint'], ['coupling', 'Beveled Coupling'], ['bullnose', 'Bull Nose'], ['pcm', 'PCM']];
+// every BHA component counted per job (the six above plus any part added on Setup)
+const qtyFields = P => (P?.parts || []).filter(p => p.kind === 'qty' && p.job_key).sort((a, b) => a.sort - b.sort).map(p => [p.job_key, partName(p), p]);
+const PART_KINDS = { qty: ['BHA component', 'A quantity is entered on each job, like the packer or safety joint.'], service: ['Service tool', 'Needed once per tubing size, like the EMST or a retrieving tool.'],
+  blank: ['Blank pipe length', 'A new blank length to choose on the job sheet.'], screen: ['Screen size', 'A new screen micron to choose on the job sheet.'] };
 const planCfg = () => setting('planner', {}) || {};
 const canSeePrices = () => ['admin', 'superadmin', 'management'].includes(role());
 const canEditPlan = () => canAdmin(planCfg().department_id);
@@ -116,7 +120,7 @@ function bhaText(j) {
   if (j.blank_length && +j.blank_qty) bits.push(`${fq(j.blank_qty)} × ${j.blank_length} blank`);
   if (j.screen_micron && +j.screen_qty) bits.push(`${fq(j.screen_qty)} × ${j.screen_micron.replace(' micron', 'µ')} screen${j.screen_size && j.screen_size !== j.tubing_size ? ` (${j.screen_size})` : ''}`);
   bits.push(j.setting_tool);
-  const odd = QTY_FIELDS.filter(([k]) => +((j.qty || {})[k] ?? 1) !== 1).map(([k, l]) => `${fq((j.qty || {})[k] || 0)} × ${l}`);
+  const odd = qtyFields(S.plan).filter(([k, , p]) => +((j.qty || {})[k] ?? (p.id > 20 ? 0 : 1)) !== (p.id > 20 ? 0 : 1)).map(([k, l]) => `${fq((j.qty || {})[k] || 0)} × ${l}`);
   return [...bits, ...odd].join(' · ');
 }
 
@@ -124,7 +128,7 @@ function bhaText(j) {
 ROUTES.planner = {
   async load(parts, params) {
     if (params.get('tab')) PL.tab = params.get('tab');
-    const P = await planData(true); const E = planEngine(P); this.ctx = { P, E };
+    const P = await planData(true); const E = planEngine(P); this.ctx = { P, E }; savePlanSnapshot(E);
     const cfg = planCfg(); const k = E.kpi;
     const tabs = [['jobs', 'Upcoming jobs'], ['summary', 'Summary'], ['shipin', 'Ship-in list'], ...(canEditPlan() ? [['setup', 'Setup']] : [])];
     if (!tabs.some(t => t[0] === PL.tab)) PL.tab = 'jobs';
@@ -203,8 +207,8 @@ ROUTES.planner = {
     };
     const priced = [...new Set(P.links.flatMap(l => l.item_ids || []).map(Number))].map(i => its.get(i)).filter(Boolean).sort((a, b) => (a.code || '').localeCompare(b.code || ''));
     return `<div class="notice">Each part is linked to the Nest item(s) it uses for each tubing size. Nest linked them by part number from your Excel; check them, especially the service tools. Click a cell to change it. Sizes with the same <b>shared stock</b> name use one pool (for example 10 ft blanks for 2-3/8" and 2-7/8").</div>
-      <section class="panel"><header><h2>Parts and Nest items</h2></header><div class="tablewrap"><table class="t plsetup"><thead><tr><th>Part</th>${sizes.map(z => `<th>${esc(z)}</th>`).join('')}</tr></thead><tbody>
-      ${P.parts.map(p => `<tr><td class="name">${esc(partName(p))}</td>${sizes.map(z => cell(p, z)).join('')}</tr>`).join('')}</tbody></table></div></section>
+      <section class="panel"><header><h2>Parts and Nest items</h2><span class="meta">${plural(P.parts.length, 'part')}</span><div class="right"><button class="btn small primary" id="pl-newpart">${ico('plus')}Add part</button></div></header><div class="tablewrap"><table class="t plsetup"><thead><tr><th>Part</th>${sizes.map(z => `<th>${esc(z)}</th>`).join('')}</tr></thead><tbody>
+      ${[...P.parts].sort((a, b) => a.sort - b.sort).map(p => `<tr><td class="name"><button type="button" class="linkbtn" data-part-edit="${p.id}">${esc(partName(p))}</button><div class="sub">${esc(PART_KINDS[p.kind]?.[0] || '')}${p.safety ? ' · counts in a complete BHA' : ''}${p.setting ? ' · ' + esc(p.setting) + ' only' : ''}${p.id > 20 ? ' · added' : ''}</div></td>${sizes.map(z => cell(p, z)).join('')}</tr>`).join('')}</tbody></table></div></section>
       <section class="panel"><header><h2>Safety stock</h2></header><form class="body" id="pl-cfg">
         <div class="tablewrap"><table class="t"><thead><tr><th></th>${sizes.map(z => `<th>${esc(z)}</th>`).join('')}</tr></thead><tbody>
         <tr><td>Complete BHAs to keep on the shelf after jobs</td>${sizes.map(z => `<td><input type="number" min="0" step="1" name="sb_${esc(z)}" value="${+(cfg.safety_bhas || {})[z] || 0}" style="width:80px"></td>`).join('')}</tr>
@@ -230,6 +234,8 @@ ROUTES.planner = {
       try { await q(sb.from('plan_jobs').delete().eq('id', j.id)); toast('Deleted'); render({ quiet: true }); } catch (e) { toast(niceError(e), true); }
     });
     $$('.plcell', main).forEach(td => td.onclick = () => editPlanLink(P, +td.dataset.part, td.dataset.size));
+    const np = $('#pl-newpart', main); if (np) np.onclick = () => editPlanPart(null);
+    $$('[data-part-edit]', main).forEach(b => b.onclick = () => editPlanPart(P.parts.find(p => p.id === +b.dataset.partEdit)));
     $$('[data-price]', main).forEach(b => b.onclick = () => editLinePrice(P, E.G[b.dataset.price]));
     const f = $('#pl-cfg', main);
     if (f) f.onsubmit = async e => {
@@ -255,17 +261,15 @@ function editPlanJob(j) {
   const seg = (name, vals, cur) => `<div class="segi">${vals.map(v => `<label><input type="radio" name="${name}" value="${esc(v)}" ${v === cur ? 'checked' : ''}><span>${esc(v)}</span></label>`).join('')}</div>`;
   const qin = (n, v) => `<input type="number" min="0" step="1" name="${n}" value="${v ?? ''}" class="qin">`;
   const part = (tool, spec) => P.parts.find(p => p.tool === tool && (spec == null || p.spec === spec));
-  const rows = [
-    ['packer', 'Paragon II Packer', 'Std', qin('q_packer', q0.packer ?? 1)],
-    ['xo', 'Hang-off Crossover', 'Std', qin('q_xo', q0.xo ?? 1)],
-    ['sj', 'Safety Joint', 'Std', qin('q_sj', q0.sj ?? 1)],
-    ['coupling', 'Beveled Coupling', 'Std', qin('q_coupling', q0.coupling ?? 1)],
-    ['blank', 'Blank Pipe', `<select name="blen" class="inline"><option value="">None</option>${(cfg.blanks || []).map(b => opt(b, b, j ? j.blank_length : '10 ft')).join('')}</select>`, qin('bqty', j ? j.blank_qty : 1)],
-    ['screen', 'Deltapore Screen', `<select name="mic" class="inline"><option value="">None</option>${(cfg.microns || []).map(m => opt(m, m.replace(' micron', 'µ'), j?.screen_micron)).join('')}</select>
-      <select name="ssize" class="inline" title="Screen size, if different from the tubing"><option value="">Same size</option>${sizes.map(z => opt(z, z, j?.screen_size)).join('')}</select>`, qin('sqty', j ? j.screen_qty : 1)],
-    ['bullnose', 'Bull Nose', 'Std', qin('q_bullnose', q0.bullnose ?? 1)],
-    ['pcm', 'PCM', 'Std', qin('q_pcm', q0.pcm ?? 1)],
-  ];
+  const rows = []; let seenBlank = false, seenScreen = false;
+  [...P.parts].sort((a, b) => a.sort - b.sort).forEach(p => {
+    if (p.kind === 'qty' && p.job_key) rows.push([p.job_key, partName(p), 'Std', qin('q_' + p.job_key, q0[p.job_key] ?? (j && p.id > 20 ? 0 : +p.default_qty))]);
+    else if (p.kind === 'blank' && !seenBlank) { seenBlank = true;
+      rows.push(['blank', 'Blank Pipe', `<select name="blen" class="inline"><option value="">None</option>${(cfg.blanks || []).map(b => opt(b, b, j ? j.blank_length : '10 ft')).join('')}</select>`, qin('bqty', j ? j.blank_qty : 1)]); }
+    else if (p.kind === 'screen' && !seenScreen) { seenScreen = true;
+      rows.push(['screen', 'Deltapore Screen', `<select name="mic" class="inline"><option value="">None</option>${(cfg.microns || []).map(m => opt(m, m.replace(' micron', 'µ'), j?.screen_micron)).join('')}</select>
+      <select name="ssize" class="inline" title="Screen size, if different from the tubing"><option value="">Same size</option>${sizes.map(z => opt(z, z, j?.screen_size)).join('')}</select>`, qin('sqty', j ? j.screen_qty : 1)]); }
+  });
   return modal({
     title: j ? `Edit ${j.title}` : 'Add upcoming job', wide: true, submit: j ? 'Save changes' : 'Add job',
     sub: `${esc(lineName(cfg.department_id))} · screen hang-off BHA`,
@@ -295,7 +299,7 @@ function editPlanJob(j) {
         const lineFor = p => p && r ? r.lines.find(l => l.part.id === p.id) : null;
         $$('tr[data-row]', d).forEach(tr => {
           const k = tr.dataset.row; const cell = $('.shelf', tr);
-          const p = k === 'blank' ? part('Blank Pipe', x.blen) : k === 'screen' ? part('Deltapore Screen', x.mic) : P.parts.find(pp => pp.job_key === k);
+          const p = k === 'blank' ? P.parts.find(pp => pp.kind === 'blank' && pp.spec === x.blen) : k === 'screen' ? P.parts.find(pp => pp.kind === 'screen' && pp.spec === x.mic) : P.parts.find(pp => pp.job_key === k);
           const ln = lineFor(p);
           if (!planned) { cell.innerHTML = '<span class="sub">—</span>'; return; }
           if (!ln || !ln.need) { cell.innerHTML = '<span class="sub">—</span>'; return; }
@@ -325,7 +329,7 @@ function editPlanJob(j) {
 function planRow(x, j) {
   return { title: (x.title || '').trim(), customer: (x.customer || '').trim() || null, planned_on: (x.month || localISO(0).slice(0, 7)) + '-01', tubing_size: x.size, setting_tool: x.tool,
     blank_length: x.blen || null, blank_qty: x.blen ? +x.bqty || 0 : 0, screen_micron: x.mic || null, screen_qty: x.mic ? +x.sqty || 0 : 0, screen_size: x.ssize || null,
-    qty: Object.fromEntries(QTY_FIELDS.map(([k]) => [k, +x['q_' + k] || 0])), status: x.status || 'planned', notes: (x.notes || '').trim() || null };
+    qty: Object.fromEntries(qtyFields(S.plan).map(([k]) => [k, +x['q_' + k] || 0])), status: x.status || 'planned', notes: (x.notes || '').trim() || null };
 }
 
 function editPlanLink(P, partId, size) {
@@ -458,4 +462,65 @@ function editLinePrice(P, g) {
       S.plan = null; toast('Prices saved'); render({ quiet: true });
     }
   });
+}
+
+// ---------------------------------------------------------------- planner parts (2.6)
+function editPlanPart(p) {
+  const isNew = !p; const cfg = planCfg();
+  const kindRadios = Object.entries(PART_KINDS).map(([k, [l, d]], i) => `<label class="mopt"><input type="radio" name="kind" value="${k}" ${i === 0 ? 'checked' : ''}><span><b>${esc(l)}</b><span class="sub">${esc(d)}</span></span></label>`).join('');
+  return modal({
+    title: isNew ? 'Add a planner part' : `Edit ${partName(p)}`, submit: isNew ? 'Add part' : 'Save', wide: isNew,
+    sub: isNew ? 'After adding it, link it to the Nest item(s) it uses for each tubing size, in the table.' : `${esc(PART_KINDS[p.kind]?.[0] || '')}${p.id <= 20 ? ' · one of the 20 parts from the Excel tracker' : ''}`,
+    body: `${isNew ? `<div class="pjf-sec">Type of part</div><div class="mscope">${kindRadios}</div><div class="pjf-sec">Details</div>` : ''}
+      <div class="row2"><label class="f">Name<input type="text" name="tool" required value="${esc(p?.tool || '')}" placeholder="Swell Packer"></label>
+        <label class="f"><span class="pp-spec-l">${p && ['blank', 'screen'].includes(p.kind) ? (p.kind === 'blank' ? 'Length' : 'Micron') : 'Size / spec'}</span><span class="hint pp-spec-h">${p && ['blank', 'screen'].includes(p.kind) ? 'Can’t be changed: jobs use it.' : 'Optional. Leave empty for standard.'}</span>
+          <input type="text" name="spec" value="${esc(p && p.spec !== 'Std' ? p.spec : '')}" ${p && ['blank', 'screen'].includes(p.kind) ? 'readonly' : ''} placeholder="e.g. 6 ft or 300 micron"></label></div>
+      <div class="row3 pp-qty"><label class="f">Default quantity<span class="hint">Pre-filled on new jobs.</span><input type="number" min="0" step="1" name="def" value="${p ? +p.default_qty : 1}"></label>
+        <label class="f">Per complete BHA<span class="hint">For the safety-stock count.</span><input type="number" min="1" step="1" name="per" value="${p ? +p.per_bha || 1 : 1}"></label>
+        <label class="f pp-svc" ${p?.kind === 'service' ? '' : 'hidden'}>Only with setting tool<select name="setting"><option value="">Any</option>${(cfg.tools || ['EMST', 'TTS']).map(t => opt(t, t, p?.setting)).join('')}</select></label></div>
+      <label class="check pp-safe"><input type="checkbox" name="safety" ${p ? (p.safety ? 'checked' : '') : 'checked'}> Counts toward a complete BHA on the shelf (and the safety top-up)</label>
+      ${!isNew && p.id > 20 ? '<div class="mt"><button type="button" class="btn small link danger" id="pp-del">Remove this part from the planner</button></div>' : ''}`,
+    onOpen: d => {
+      const f = $('form', d);
+      const sync = () => {
+        const k = isNew ? f.kind.value : p.kind;
+        $('.pp-svc', d).hidden = k !== 'service'; $('.pp-safe', d).hidden = k === 'service';
+        $$('.pp-qty label', d)[0].hidden = k !== 'qty';
+        if (isNew) { $('.pp-spec-l', d).textContent = k === 'blank' ? 'Length' : k === 'screen' ? 'Micron' : 'Size / spec'; $('.pp-spec-h', d).textContent = k === 'blank' ? 'For example 6 ft.' : k === 'screen' ? 'For example 300 micron.' : 'Optional. Leave empty for standard.';
+          if (k === 'blank') f.tool.value = f.tool.value || 'Blank Pipe'; if (k === 'screen') f.tool.value = f.tool.value || 'Deltapore Screen'; }
+      };
+      if (isNew) $$('[name=kind]', d).forEach(r => r.onchange = sync);
+      sync();
+      const del = $('#pp-del', d); if (del) del.onclick = async () => {
+        if (!confirm(`Remove ${partName(p)} from the planner? Its links are removed too. Jobs keep their other parts.`)) return;
+        try { await q(sb.rpc('remove_plan_part', { p_id: p.id })); toast('Part removed'); d.close(); d.remove(); S.plan = null; render({ quiet: true }); } catch (e) { toast(niceError(e), true); }
+      };
+    },
+    onSubmit: async x => {
+      if (!x.tool.trim()) throw new Error('Enter the part name.');
+      if (isNew && ['blank', 'screen'].includes(x.kind) && !x.spec.trim()) throw new Error(x.kind === 'blank' ? 'Enter the length, for example 6 ft.' : 'Enter the micron, for example 300 micron.');
+      if (isNew) await q(sb.rpc('add_plan_part', { p_tool: x.tool, p_spec: x.spec, p_kind: x.kind, p_setting: x.setting || '', p_safety: !!x.safety, p_per_bha: +x.per || 1, p_default_qty: +x.def || 0 }));
+      else await q(sb.rpc('update_plan_part', { p_id: p.id, p_tool: x.tool, p_spec: x.spec, p_safety: !!x.safety, p_per_bha: +x.per || 1, p_default_qty: +x.def || 0, p_setting: x.setting || '' }));
+      await loadLookups(); S.plan = null; toast(isNew ? 'Part added. Now link it to its Nest items.' : 'Saved'); render({ quiet: true });
+    }
+  });
+}
+
+// The stock check runs here in the browser; save the latest result so the morning emails can say which jobs are short
+let planSnapAt = 0;
+function savePlanSnapshot(E) {
+  if (Date.now() - planSnapAt < 5 * 60 * 1000 || S.viewAs) return; planSnapAt = Date.now();
+  try {
+    const jobs = E.active.map(j => { const r = E.results.get(j.id); return { id: j.id, title: j.title, planned_on: j.planned_on, tubing_size: j.tubing_size, ok: !!r?.ok,
+      short_n: r ? r.short.length : 0, short: r ? r.short.map(sh => `${fq(sh.missing)} × ${partName(sh.part)}${sh.size !== j.tubing_size ? ` (${sh.size})` : ''}`) : [] }; });
+    const ship = E.lines.filter(l => l.total > 0).map(l => ({ part: partName(l.part), label: l.label, total: l.total, items: [...l.g.items] }));
+    sb.rpc('save_plan_snapshot', { p_value: { jobs, ship, kpi: { active: E.kpi.active, ready: E.kpi.ready, short: E.kpi.short, total: E.kpi.total } } }).then(() => { }, () => { });
+  } catch (e) { console.warn('plan snapshot', e); }
+}
+// keep the snapshot fresh even when nobody opens the planner (once every 6 hours, in the background)
+async function refreshPlanSnapshot() {
+  try {
+    const at = setting('plan_snapshot', null)?.at; if (at && Date.now() - new Date(at).getTime() < 6 * 3600e3) return;
+    const P = await planData(); savePlanSnapshot(planEngine(P));
+  } catch (e) { console.warn('plan snapshot refresh', e); }
 }

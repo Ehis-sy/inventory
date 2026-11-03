@@ -279,7 +279,7 @@ ROUTES.team = {
           <td><select data-backup="${d.id}" class="inline"><option value="">None</option>${admins.map(a => opt(a.id, a.full_name || a.email, d.backup_admin)).join('')}</select></td></tr>`).join('')}
         </tbody></table></div><div class="body muted">Approval requests and alerts for a line go to its main and backup admin. As Super Admin you can approve anything.</div></section>` : ''}
       <section class="panel"><div class="body"><b>What each role can do</b>
-        <dl class="kv mt"><dt>Staff</dt><dd>Day-to-day work in their own service line(s): check out and in, materials requests, receive, move between Port Harcourt and Warri, issue and sell, monthly counts and certificates. Quantity corrections and kit details go to their admin for approval. Staff can see all stock but don’t see Setup.</dd>
+        <dl class="kv mt"><dt>Staff</dt><dd>Day-to-day work in their own service line(s): check out and in, materials requests, receive, move between locations, issue and sell, monthly counts and certificates. Quantity corrections and kit details go to their admin for approval. Staff can see all stock but don’t see Setup.</dd>
         <dt>Admin</dt><dd>Everything staff can do, plus approving requests and managing items for their service lines, locations, labels, approving new staff, and the audit log for their lines.</dd>
         <dt>Management</dt><dd>View-only: Overview, Inventory, Job planner, Reports and Sign-offs, including prices. Can download reports but can’t change anything. Only the Super Admin can give this access.</dd>
         <dt>Super Admin</dt><dd>Everything, in every service line: making admins, choosing who approves for each line, settings, and the full audit log.</dd></dl></div></section>`;
@@ -415,13 +415,12 @@ ROUTES.settings = {
       <section class="panel"><header><h2>QMS form details on reports</h2></header><div class="body">
         <label class="f">Ref No.<input type="text" name="form_ref" value="${s('form_ref')}"></label>
         <div class="row2"><label class="f">Issue date<input type="text" name="form_issue" value="${s('form_issue')}"></label><label class="f">Revision<input type="text" name="form_revision" value="${s('form_revision')}"></label></div></div></section>
-      <section class="panel"><header><h2>Email alerts</h2></header><div class="body"><p class="muted">Sign-up, invitation and password emails are sent from nest-alerts@gankcoenergy.com. Daily alert emails are planned; until then, alerts show in the bell inside Nest.</p></div></section>
       <div><button class="btn primary" type="submit">Save settings</button></div></form>
-      ${backupPanel()}`;
+      ${await alertsPanel()}${maintPanel()}${backupPanel()}`;
   },
   bind(main) {
     const f = $('#sf', main); if (!f) return;
-    bindBackup(main);
+    bindBackup(main); bindAlertsPanel(main); bindMaintPanel(main);
     f.onsubmit = async e => {
       e.preventDefault(); const d = Object.fromEntries(new FormData(f));
       if (+d.count_open_day > +d.count_close_day) return toast('The count must open before the deadline.', true);
@@ -540,11 +539,13 @@ ROUTES.account = {
         ${sigBox(await mySigImage(), 'big')}
         <div class="actionrow mt"><button class="btn primary" id="sigup">${ico('up')}${p.signature_id ? 'Replace signature' : 'Upload signature'}</button>${p.signature_id ? '<button class="btn danger" id="sigrm">Remove</button>' : ''}</div>
         <p class="sub">Tip: sign on plain white paper with a dark pen, then take a straight photo in good light or scan it.</p></div></section>
+      ${myAlertsPanel()}
       <section class="panel"><header><h2>About Nest</h2></header><div class="body">
         <dl class="kv"><dt>App</dt><dd>${esc(CFG.APP_NAME)} v${esc(CFG.VERSION || '')}</dd><dt>Company</dt><dd>${esc(CFG.COMPANY || '')}</dd><dt>Credit</dt><dd>${esc(CREDIT)}</dd></dl></div></section>
       <button class="btn" id="out">Sign out</button>`;
   },
   bind(main) {
+    bindMyAlerts(main);
     $('#prof', main).onsubmit = async e => {
       e.preventDefault(); const name = new FormData(e.target).get('name').trim();
       try { await q(sb.from('profiles').update({ full_name: name }).eq('id', S.profile.id)); await sb.auth.updateUser({ data: { full_name: name } });

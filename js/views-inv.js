@@ -53,7 +53,7 @@ ROUTES.dashboard = {
       q(sb.from('kit_status').select('*').not('expiry_on', 'is', null).lte('expiry_on', localISO(+setting('kit_warn_days', 60))).order('expiry_on')),
       q(sb.from('movements').select('*, items(code,name,department_id)').order('created_at', { ascending: false }).limit(40)),
       q(sb.from('counts').select('*').eq('month', monthISO())),
-      refreshAlerts(), stockRows(),
+      refreshAlerts(), stockRows(), loadOrders(),
     ]);
     const L = +S.line || null; const inL = d => !L || d === L;
     const active = its.filter(i => i.active && inL(i.department_id));
@@ -103,7 +103,7 @@ ROUTES.dashboard = {
             : '<div class="empty">Nothing is checked out right now.</div>'}</section>
         <section class="panel"><header><h2>Need restocking</h2><span class="meta">at or below reorder level</span><div class="right"><a class="btn small" href="#/inventory?v=reorder">See all</a></div></header>
           ${low.length ? `<ul class="list">${low.slice(0, 7).map(i => li(`#/item/${i.id}`, `${tag(i.code)} ${esc(i.name)}`, `${esc(i.line)} · ${TYPE_SHORT[i.item_type]}`,
-            `<b>${fq(i.qty_available)}</b> <span class="sub">left${i.min_qty != null ? ` / min ${fq(i.min_qty)}` : ''}</span>`)).join('')}</ul>`
+            `${S.orders[i.id] ? (S.orders[i.id].expected_on && S.orders[i.id].expected_on < t ? chip('overdue', 'On order · late') : chip('onorder', 'On order' + (S.orders[i.id].expected_on ? ' · ' + fdm(S.orders[i.id].expected_on) : ''))) + ' ' : ''}<b>${fq(i.qty_available)}</b> <span class="sub">left${i.min_qty != null ? ` / min ${fq(i.min_qty)}` : ''}</span>`)).join('')}</ul>`
             : '<div class="empty">Nothing is below its reorder level. Set a minimum on an item to get alerts.</div>'}</section>
         <section class="panel"><header><h2>Expiring soon</h2><span class="meta">certificates and redress kits</span><div class="right"><a class="btn small" href="#/certs">See all</a></div></header>
           ${ce.length + ki.length ? `<ul class="list">${[
@@ -272,7 +272,7 @@ function templatesMenu() {
     title: 'Excel templates', sub: 'Download a template for your service line, fill it in, then upload it. You’ll see a preview before anything changes.', submit: null, cancel: 'Close',
     body: `<div class="tplgrid">
       ${Object.entries(TEMPLATE_INFO).map(([k, v]) => `<div class="tplcard"><b>${esc(v.title)}</b><span class="sub">${{
-        locations: 'Set how many of each item are in Port Harcourt and Warri. Applies as moves.',
+        locations: 'Set how many of each item are in each store location. Applies as moves.',
         quantities: 'Correct in-store numbers. Staff corrections go to the admin as one request.',
         kits: 'Kit numbers, components and expiry dates for redress kits.' }[k]}</span>
         <button type="button" class="btn small" data-dl="${k}">${ico('down')}Download</button></div>`).join('')}</div>
@@ -390,6 +390,8 @@ async function resolveCategory(data) {
   const c = await q(sb.from('categories').insert({ department_id: +data.department_id, name, sort: 999 }).select().single());
   S.cats.push(c); return c.id;
 }
+const SVC_OPTS = (cur, bulk) => [[bulk ? 'none' : '', 'No idle-service rule'], ['6', '6 months'], ['12', '12 months (1 year)'], ['18', '18 months'], ['24', '24 months (2 years)']]
+  .map(([v, l]) => opt(v, l, cur == null ? (bulk ? undefined : '') : String(cur))).join('');
 function editItem(it) {
   const isNew = !it;
   return modal({
@@ -402,6 +404,7 @@ function editItem(it) {
       <label class="f">Restock up to (max)<span class="hint">Used to suggest how many to order.</span><input type="number" step="any" min="0" name="max_qty" value="${esc(it?.max_qty)}"></label></div>
       <div class="row2"><label class="f">Unit<input type="text" name="unit" value="${esc(it?.unit || 'pcs')}"></label>
       <label class="f">OEM / supplier<input type="text" name="supplier" value="${esc(it?.supplier)}"></label></div>
+      <label class="f">Service if idle on the shelf<span class="hint">Nest reminds the line admin when the tool hasn’t been used or serviced for this long.</span><select name="svc">${SVC_OPTS(it?.service_idle_months)}</select></label>
       ${isNew ? `<div class="row2"><label class="f">Opening quantity<input type="number" step="any" min="0" name="qty" value="0"></label>
         <label class="f">At location<select name="location_id">${locOptions(realLocs()[0]?.id)}</select></label></div>` : ''}
       <label class="f">Notes<textarea name="notes">${esc(it?.notes)}</textarea></label>
@@ -415,12 +418,12 @@ function editItem(it) {
         const id = await q(sb.rpc('create_item', { p_code: data.code, p_name: data.name, p_department: +data.department_id, p_category: cat,
           p_type: data.item_type, p_unit: data.unit, p_min: num(data.min_qty), p_max: num(data.max_qty), p_supplier: data.supplier, p_notes: data.notes,
           p_location: +data.location_id, p_qty: num(data.qty) || 0 }));
-        if (data.is_kit) await q(sb.from('items').update({ is_kit: true }).eq('id', id));
+        if (data.is_kit || data.svc) await q(sb.from('items').update({ is_kit: !!data.is_kit, service_idle_months: data.svc ? +data.svc : null }).eq('id', id));
         toast('Item added'); invalidate(); go('#/item/' + id); return;
       }
       await q(sb.from('items').update({ code: data.code.trim() || null, name: data.name.trim(), department_id: +data.department_id, category_id: cat,
         item_type: data.item_type, unit: data.unit || 'pcs', min_qty: num(data.min_qty), max_qty: num(data.max_qty),
-        supplier: data.supplier || null, notes: data.notes || null, active: !!data.active, is_kit: !!data.is_kit }).eq('id', it.id));
+        supplier: data.supplier || null, notes: data.notes || null, active: !!data.active, is_kit: !!data.is_kit, ...('service_idle_months' in it ? { service_idle_months: data.svc ? +data.svc : null } : {}) }).eq('id', it.id));
       toast('Changes saved'); refresh();
     }
   });
@@ -432,7 +435,8 @@ function bulkEdit(ids) {
       <div class="row2"><label class="f">Reorder at (min)<input type="number" step="any" min="0" name="min_qty"></label>
       <label class="f">Restock up to (max)<input type="number" step="any" min="0" name="max_qty"></label></div>
       <div class="row2"><label class="f">Unit<input type="text" name="unit"></label><label class="f">OEM / supplier<input type="text" name="supplier"></label></div>
-      <label class="f">Redress kit<select name="is_kit"><option value="">No change</option><option value="yes">Yes, these are redress kits</option><option value="no">No</option></select></label>
+      <div class="row2"><label class="f">Redress kit<select name="is_kit"><option value="">No change</option><option value="yes">Yes, these are redress kits</option><option value="no">No</option></select></label>
+      <label class="f">Service if idle on the shelf<select name="svc"><option value="">No change</option>${SVC_OPTS(undefined, true)}</select></label></div>
       <label class="check"><input type="checkbox" name="clear_min"> Remove reorder levels from these items</label>`,
     onSubmit: async d => {
       const u = {};
@@ -442,6 +446,7 @@ function bulkEdit(ids) {
       if (d.clear_min) { u.min_qty = null; u.max_qty = null; }
       if (d.unit) u.unit = d.unit; if (d.supplier) u.supplier = d.supplier;
       if (d.is_kit) u.is_kit = d.is_kit === 'yes';
+      if (d.svc) u.service_idle_months = d.svc === 'none' ? null : +d.svc;
       if (!Object.keys(u).length) throw new Error('Fill in at least one field.');
       for (let i = 0; i < ids.length; i += 200) await q(sb.from('items').update(u).in('id', ids.slice(i, i + 200)));
       toast(`Updated ${plural(ids.length, 'item')}`); S.inv.sel.clear(); refresh();
@@ -453,7 +458,7 @@ function bulkEdit(ids) {
 ROUTES.item = {
   async load(parts) {
     const id = +parts[1];
-    const [it, stock, cos, units, certs, moves, comps] = await Promise.all([
+    const [it, stock, cos, units, certs, moves, comps, price, order, svc, svcLog, lastUse] = await Promise.all([
       q(sb.from('item_overview').select('*').eq('id', id).maybeSingle()),
       q(sb.from('stock').select('*').eq('item_id', id).gt('qty', 0)),
       q(sb.from('checkouts').select('*, jobs(id,job_no)').eq('item_id', id).is('closed_at', null).order('out_at')),
@@ -461,9 +466,15 @@ ROUTES.item = {
       q(sb.from('certifications').select('*').eq('item_id', id).order('superseded').order('due_on', { nullsFirst: false })),
       q(sb.from('movements').select('*').eq('item_id', id).order('created_at', { ascending: false }).limit(60)),
       q(sb.from('kit_components').select('*').eq('item_id', id).order('sort')),
+      canSeePrices() ? q(sb.from('item_prices').select('*').eq('item_id', id).maybeSingle()).catch(() => null) : null,
+      q(sb.from('item_orders').select('*').eq('item_id', id).maybeSingle()).catch(() => null),
+      q(sb.from('service_status').select('*').eq('item_id', id).maybeSingle()).catch(() => null),
+      q(sb.from('service_log').select('*').eq('item_id', id).order('serviced_at', { ascending: false }).limit(10)).catch(() => []),
+      q(sb.from('checkouts').select('out_at').eq('item_id', id).order('out_at', { ascending: false }).limit(1)).catch(() => []),
     ]);
     if (!it) return topbar('Item not found', 'It may have been removed.') + '<a class="btn" href="#/inventory">Back to inventory</a>';
-    this.ctx = { it, stock, cos, units, certs, comps };
+    it.service_idle_months = svc?.service_idle_months ?? null;
+    this.ctx = { it, stock, cos, units, certs, comps, price, order, svc };
     const t = localISO(0); const act = canAct(it.department_id); const adm = canAdmin(it.department_id);
     const canIssue = it.item_type !== 'equipment';
     const stockRowsSorted = stock.sort((a, b) => locName(a.location_id).localeCompare(locName(b.location_id)));
@@ -488,7 +499,7 @@ ROUTES.item = {
         <div><div class="n">${fq(it.qty_total)}</div><div class="l">Total ${esc(it.unit)}${it.min_qty != null ? ` · reorder at ${fq(it.min_qty)}` : ''}</div></div>
       </div>
       ${it.notes ? `<div class="notice">${esc(it.notes)}</div>` : ''}
-      ${ph && stock.some(s => s.location_id === ph.id) && act ? `<div class="notice">Some of this item has no location yet. Use <b>Move</b> to put it in Port Harcourt or Warri.</div>` : ''}
+      ${ph && stock.some(s => s.location_id === ph.id) && act ? `<div class="notice">Some of this item has no location yet. Use <b>Move</b> to put it in its store location.</div>` : ''}
       ${act ? `<div class="actionrow">
         <button class="btn tagbtn" data-a="checkout">${ico('out')}Check out</button>
         <button class="btn" data-a="receive">${ico('plus')}Receive stock</button>
@@ -527,6 +538,7 @@ ROUTES.item = {
             <ul class="list">${old.map(c => `<li><div><div class="name">${CERT_KINDS[c.kind]} ${esc(c.cert_no || '')}</div><div class="sub">Due ${fd(c.due_on)}${c.provider ? ' · ' + esc(c.provider) : ''}</div></div></li>`).join('')}</ul></details>` : ''}
         </section>
       </div>
+      <div class="cols">${itemPricePanel(it, price, order, adm)}${itemServicePanel(it, svc, svcLog, lastUse[0]?.out_at, adm)}</div>
       ${!it.is_kit ? `<section class="panel mt"><header><h2>Serial & batch numbers</h2><span class="meta">${units.length || 'none recorded'}</span>
         ${adm ? `<div class="right"><button class="btn small" data-a="unit">${ico('plus')}Add</button></div>` : ''}</header>
         ${units.length ? `<div class="tablewrap"><table class="t stack"><thead><tr><th>Serial no.</th><th>Batch / lot</th><th>Expiry</th><th>Supplier</th><th>Notes</th>${adm ? '<th></th>' : ''}</tr></thead><tbody>
@@ -547,6 +559,7 @@ ROUTES.item = {
     $$('[data-unit]', main).forEach(b => b.onclick = () => editUnit(c.it, c.units.find(u => u.id === +b.dataset.unit)));
     $$('[data-kit]', main).forEach(b => b.onclick = () => editKit(c, c.units.find(u => u.id === +b.dataset.kit)));
     const l = $('#lbl', main); if (l) l.onclick = () => { sessionStorage.setItem('labels', JSON.stringify([c.it.id])); go('#/labels'); };
+    bindItemExtras(main, c);
   }
 };
 
@@ -815,4 +828,60 @@ ROUTES.scan = {
 function qrSvg(text, cell = 3) {
   const qr = window.qrcode(0, 'M'); qr.addData(text); qr.make();
   return qr.createSvgTag({ cellSize: cell, margin: 0, scalable: true });
+}
+
+// ================================================================ ITEM: price, on order, servicing (2.6)
+function itemPricePanel(it, price, order, adm) {
+  const t = localISO(0); const sp = canSeePrices();
+  const ord = order ? `<div class="ordbox ${order.expected_on && order.expected_on < t ? 'late' : ''}"><div><b>On order: ${fq(order.qty)} ${esc(it.unit)}</b>
+      <div class="sub">${order.expected_on ? `Expected ${fd(order.expected_on)}${order.expected_on < t ? ' · late' : ''}` : 'No expected date'}${order.set_by_name ? ' · set by ' + esc(order.set_by_name) : ''}${order.note ? ' · ' + esc(order.note) : ''}</div></div>
+      ${adm && !readOnly() ? `<div class="actionrow"><button class="btn small" data-x2="order">Update</button><button class="btn small link danger" data-x2="unorder">Clear</button></div>` : ''}</div>`
+    : `<div class="sub">${needsReorder(it) ? 'Below reorder level and not on order yet.' : 'Not on order.'}</div>${adm && !readOnly() ? `<div class="actionrow mt"><button class="btn small" data-x2="order">${ico('truck')}Mark on order</button></div>` : ''}`;
+  return `<section class="panel"><header><h2>${sp ? 'Price &amp; ordering' : 'Ordering'}</h2></header><div class="body">
+    ${sp ? `<div class="pricebox"><div><span class="sub">Unit price</span><b>${price ? `${price.currency === 'NGN' ? '₦' : '$'}${Number(price.unit_price).toLocaleString('en-US', { maximumFractionDigits: 2 })}` : '<span class="sub">No price</span>'}</b>
+      ${price ? `<span class="sub">${esc(price.source || '')}${price.updated_by_name ? ' · ' + esc(price.updated_by_name) : ''}${price.updated_at ? ' · ' + fd(price.updated_at) : ''}</span>` : ''}</div>
+      ${isAdmin() && !readOnly() ? `<button class="btn small" data-x2="price">${price ? 'Edit price' : 'Add price'}</button>` : ''}</div>` : ''}
+    <div class="pjf-sec">On order</div>${ord}</div></section>`;
+}
+function itemServicePanel(it, svc, log, lastUse, adm) {
+  const t = localISO(0); const ro = readOnly();
+  if (!it.service_idle_months) return `<section class="panel"><header><h2>Servicing</h2>${chip('muted', 'No rule')}</header><div class="body">
+    <p class="muted">Set an idle-service rule for tools that must be serviced if they sit on the shelf unused, for example every 12 months. Nest then reminds the line admin.</p>
+    ${lastUse ? `<dl class="kv"><dt>Last used</dt><dd>${fd(lastUse)}</dd></dl>` : ''}
+    ${adm && !ro ? `<div class="actionrow mt"><button class="btn small" data-x2="rule">Set a rule</button></div>` : ''}</div></section>`;
+  const due = svc?.service_due_on; const soon = due && due <= localISO(30);
+  return `<section class="panel"><header><h2>Servicing</h2>${svc?.out_now ? chip('out', 'Out on a job') : due && due <= t ? chip('overdue', 'Service due') : soon ? chip('soon', 'Due soon') : chip('ok', 'Up to date')}</header><div class="body">
+    <dl class="kv"><dt>Rule</dt><dd>Service if idle ${it.service_idle_months} months</dd>
+      <dt>Last used</dt><dd>${svc?.last_used_at ? fd(svc.last_used_at) : '<span class="sub">Never issued in Nest</span>'}</dd>
+      <dt>Last serviced</dt><dd>${svc?.last_serviced_at ? `${fd(svc.last_serviced_at)}${svc.last_serviced_by_name ? ' · ' + esc(svc.last_serviced_by_name) : ''}` : '<span class="sub">Not recorded</span>'}</dd>
+      <dt>Next service</dt><dd>${due ? `<b class="${due <= t ? 'neg' : ''}">${fd(due)}</b>${svc?.out_now ? '<span class="sub"> · paused while out on a job</span>' : ''}` : '—'}</dd></dl>
+    ${adm && !ro ? `<div class="actionrow mt"><button class="btn small tagbtn" data-x2="serviced">${ico('check')}Mark serviced</button><button class="btn small" data-x2="rule">Change rule</button></div>` : ''}
+    ${log.length ? `<details class="mt"><summary class="muted">Service history (${log.length})</summary><ul class="list">${log.map(l => `<li><div><div class="name">${fd(l.serviced_at)} · ${esc(l.serviced_by_name || '')}</div>${l.note ? `<div class="sub">${esc(l.note)}</div>` : ''}</div></li>`).join('')}</ul></details>` : ''}
+  </div></section>`;
+}
+function bindItemExtras(main, c) {
+  const it = c.it;
+  const A = {
+    price: () => modal({ title: `Price · ${it.code || it.name}`, submit: 'Save price', sub: 'Seen by admins, the Super Admin and Management. Staff never see prices. Every change is in the audit log.',
+      body: `<div class="row2"><label class="f">Unit price<input type="number" min="0" step="0.01" name="p" value="${c.price ? +c.price.unit_price : ''}" placeholder="Leave empty for no price"></label>
+        <label class="f">Currency<select name="cur">${opt('USD', 'USD ($)', c.price?.currency || 'USD')}${opt('NGN', 'NGN (₦)', c.price?.currency)}</select></label></div>`,
+      onSubmit: async x => {
+        if (String(x.p).trim() === '') { if (c.price) await q(sb.from('item_prices').delete().eq('item_id', it.id)); }
+        else await q(sb.from('item_prices').upsert({ item_id: it.id, unit_price: +x.p, currency: x.cur, source: 'Entered in Nest' }));
+        S.plan = null; toast('Price saved'); refresh();
+      } }),
+    order: () => modal({ title: `On order · ${it.code || it.name}`, submit: 'Save', sub: 'Shows in the Monday email and on the low-stock lists. It clears itself when the stock is received in Nest.',
+      body: `<div class="row2"><label class="f">Quantity on order<input type="number" min="0" step="any" name="qty" required value="${c.order ? +c.order.qty : (it.max_qty != null ? Math.max(1, it.max_qty - it.qty_available) : '')}"></label>
+        <label class="f">Expected<input type="date" name="exp" value="${esc(c.order?.expected_on || '')}"></label></div>
+        <label class="f">Note<span class="hint">Optional, for example the PO number or supplier.</span><input type="text" name="note" value="${esc(c.order?.note || '')}"></label>`,
+      onSubmit: async x => { await q(sb.rpc('set_item_order', { p_item: it.id, p_qty: +x.qty, p_expected: x.exp || null, p_note: x.note || '' })); toast('Marked on order'); refresh(); } }),
+    unorder: async () => { try { await q(sb.rpc('clear_item_order', { p_item: it.id })); toast('No longer on order'); refresh(); } catch (e) { toast(niceError(e), true); } },
+    serviced: () => modal({ title: `Mark serviced · ${it.code || it.name}`, submit: 'Mark serviced', sub: 'Restarts the idle clock from today and records it in the service history.',
+      body: '<label class="f">Note<span class="hint">Optional, for example who did it or what was done.</span><textarea name="note" rows="2"></textarea></label>',
+      onSubmit: async x => { await q(sb.rpc('mark_serviced', { p_item: it.id, p_note: x.note || '' })); toast('Marked serviced'); refresh(); } }),
+    rule: () => modal({ title: `Idle-service rule · ${it.code || it.name}`, submit: 'Save rule',
+      body: `<label class="f">Service if idle on the shelf<span class="hint">The clock starts from the last time it was issued on a job, serviced, or added to Nest.</span><select name="svc">${SVC_OPTS(it.service_idle_months)}</select></label>`,
+      onSubmit: async x => { await q(sb.rpc('set_service_rule', { p_items: [it.id], p_months: x.svc ? +x.svc : null })); toast(x.svc ? 'Rule saved' : 'Rule removed'); refresh(); } }),
+  };
+  $$('[data-x2]', main).forEach(b => b.onclick = () => A[b.dataset.x2]());
 }
