@@ -7,8 +7,8 @@ function statusChips(it) {
   if (+it.qty_reserved) c.push(chip('reserved', `${fq(it.qty_reserved)} reserved`));
   if (+it.qty_in_transit) c.push(chip('in_transit', `${fq(it.qty_in_transit)} in transit`));
   if (+it.qty_damaged) c.push(chip('damaged', `${fq(it.qty_damaged)} damaged`));
-  if (it.is_low) c.push(chip('low', 'Low'));
-  else if (it.item_type !== 'equipment' && +it.qty_available === 0) c.push(chip('low', 'None left'));
+  if (+it.qty_available === 0 && (it.item_type !== 'equipment' || it.is_low)) c.push(chip('low', 'None left'));
+  else if (it.is_low) c.push(chip('low', 'Low'));
   if (it.kit_expiry) { const k = kitState(it.kit_expiry); if (k !== 'ok') c.push(chip(k === 'expired' ? 'overdue' : 'soon', k === 'expired' ? 'Kit expired' : 'Kit expiring')); }
   return c.join(' ');
 }

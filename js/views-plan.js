@@ -15,6 +15,8 @@ const canEditPrices = () => !readOnly() && isAdmin();
 const isWriter = () => ['staff', 'admin', 'superadmin'].includes(role());
 const usd = n => n == null ? '' : '$' + Number(n).toLocaleString('en-US', { minimumFractionDigits: 0, maximumFractionDigits: 0 });
 const partName = p => p.tool + (p.spec && p.spec !== 'Std' ? ' ' + p.spec : '');
+// the parts that came from the Excel tracker (the 20 originals and the 2-3/8" EMST extension rod split out in 2.6.2)
+const stdPart = p => p.id <= 20 || (p.tool === 'Extension Rod' && p.spec === '2-3/8" EMST');
 const fmonthD = d => d ? new Date(d + 'T00:00:00').toLocaleDateString('en-GB', { month: 'short', year: 'numeric' }) : '—';
 const jobEff = j => (j.mr && ['out', 'closed', 'partial'].includes(j.mr.status)) ? 'run' : j.status;
 
@@ -60,9 +62,10 @@ function planEngine(P, override) {
       if (p.kind === 'qty') qty = +((j.qty || {})[p.job_key] ?? 0);
       else if (p.kind === 'blank') qty = j.blank_length === p.spec ? +j.blank_qty || 0 : 0;
       else if (p.kind === 'screen') { z = j.screen_size || j.tubing_size; qty = j.screen_micron === p.spec ? +j.screen_qty || 0 : 0; }
-      else qty = (!p.setting || p.setting === j.setting_tool) ? 1 : 0;
-      if (!(qty > 0) || !sizes.includes(z)) return;
+      if (!sizes.includes(z)) return;
       const l = linkOf(p.id, z); if (l?.mode === 'not_needed') return;
+      if (p.kind === 'service') { const st = l?.setting || p.setting; qty = (!st || st === j.setting_tool) ? 1 : 0; }
+      if (!(qty > 0)) return;
       out.push({ part: p, size: z, qty, g: G[gkey(p, z)], notCarried: l?.mode === 'not_carried' });
     });
     return out;
@@ -92,21 +95,48 @@ function planEngine(P, override) {
     const total = g.short + topup; const up = price(g);
     return { g, part: p, label: g.label, stock: g.stock, need: g.need, net, forJobs: g.short, topup, total, target, unit: up, cost: up == null ? null : up * total };
   });
-  // complete BHAs on hand (before jobs) per size, and what limits it
+  // complete BHAs on hand (before jobs) per size, and what limits it — the Excel tracker's rules (E6:H7, AA23:AD24)
+  const sBlank = cfg.safety_blank || '10 ft';
+  const bhaParts = P.parts.filter(p => p.safety && (p.kind !== 'blank' || p.spec === sBlank));
+  const blankPart = bhaParts.find(p => p.kind === 'blank');
+  const shortNm = p => ({ packer: 'Packer', xo: 'XO', sj: 'Safety Jt', coupling: 'Bev. Cplg', bullnose: 'Bull Nose' }[p.job_key] || partName(p));
+  const live = (g, z) => g.modes[z] === 'items';
   const bha = sizes.map(z => {
-    const vals = P.parts.filter(p => p.safety && (p.kind !== 'blank' || p.spec === (cfg.safety_blank || '10 ft'))).map(p => {
-      const g = G[gkey(p, z)]; const n = g.modes[z] === 'items' ? Math.floor(g.stock / (+p.per_bha || 1)) : 0; return { p, n };
-    });
-    const min = vals.length ? Math.min(...vals.map(v => v.n)) : 0;
-    const lim = vals.filter(v => v.n === min); const max = Math.max(...vals.map(v => v.n));
-    return { size: z, n: min, limitedBy: min === max ? 'Every part' : lim.map(v => partName(v.p)).join(', '), screens: P.parts.filter(p => p.kind === 'screen').reduce((a, p) => { const g = G[gkey(p, z)]; return a + (g.sizes[0] === z ? g.stock : 0); }, 0) };
+    const tg = +(cfg.safety_bhas || {})[z] || 0;
+    const vals = bhaParts.map(p => { const g = G[gkey(p, z)]; const per = +p.per_bha || 1; const st = live(g, z) ? g.stock : 0;
+      return { p, g, per, st, n: Math.floor(st / per), pooled: g.sizes.length > 1 }; });
+    const n = vals.length ? Math.min(...vals.map(v => v.n)) : 0;
+    // Limited by: parts below the safety target (Excel: tg − q pcs), and blanks short of the packers (Excel: packers × blanks/BHA − blanks)
+    const out = [];
+    vals.filter(v => v.p.kind !== 'blank').forEach(v => { if (v.st < tg * v.per) out.push(`${fq(tg * v.per - v.st)} pcs ${shortNm(v.p)}`); });
+    const bv = vals.find(v => v.p.kind === 'blank'); const pk = vals.find(v => v.p.job_key === 'packer') || vals.find(v => v.p.kind !== 'blank');
+    if (bv && pk) { const gb = pk.st * bv.per - bv.st; if (gb > 0) out.push(`${fq(gb)} pcs ${bv.p.spec} Blank${bv.pooled ? ' (pooled)' : ''}`); }
+    // left after jobs: shared stock goes to the earlier sizes' safety target first (Excel AB23)
+    const after = vals.length ? Math.min(...vals.map(v => {
+      let net = v.g.stock - v.g.need; if (!live(v.g, z)) net = 0;
+      const i = v.g.sizes.indexOf(z); for (let k = 0; k < i; k++) net -= (+(cfg.safety_bhas || {})[v.g.sizes[k]] || 0) * v.per;
+      return Math.floor(Math.max(0, net) / v.per);
+    })) : 0;
+    return { size: z, n, limitedBy: out.length ? out.join(', ') : 'None', target: tg, after, vs: after - tg,
+      screens: P.parts.filter(p => p.kind === 'screen').reduce((a, p) => { const g = G[gkey(p, z)]; return a + (g.sizes[0] === z ? g.stock : 0); }, 0) };
   });
+  // sizes that share the safety blank: how many complete BHAs they can really make together
+  const pools = [];
+  if (blankPart) {
+    const seen = new Set();
+    sizes.forEach(z => { const g = G[gkey(blankPart, z)]; if (g.sizes.length > 1 && !seen.has(g.key)) { seen.add(g.key);
+      const per = +blankPart.per_bha || 1;
+      const others = g.sizes.reduce((a, zz) => a + Math.min(...bhaParts.filter(p => p.kind !== 'blank').map(p => { const gg = G[gkey(p, zz)]; return live(gg, zz) ? Math.floor(gg.stock / (+p.per_bha || 1)) : 0; })), 0);
+      pools.push({ sizes: g.sizes, blank: blankPart.spec, blanks: g.stock, total: Math.min(others, Math.floor(g.stock / per)) }); } });
+  }
+  // Excel B6: part × size cells short for the jobs (shared stock counted once)
+  const shortCells = Object.values(G).filter(g => g.need > 0 && (g.short > 0)).length;
   const rs = [...results.values()];
   const tot = k => lines.reduce((a, l) => a + l[k], 0);
   const costKnown = lines.filter(l => l.total && l.cost != null).reduce((a, l) => a + l.cost, 0);
   const unpriced = lines.filter(l => l.total && l.cost == null).length;
-  return { G, gkey, linkOf, results, active, lines, bha, avail,
-    kpi: { active: active.length, ready: rs.filter(r => r.ok).length, short: rs.filter(r => !r.ok).length, forJobs: tot('forJobs'), topup: tot('topup'), total: tot('total'),
+  return { G, gkey, linkOf, results, active, lines, bha, pools, avail,
+    kpi: { active: active.length, ready: rs.filter(r => r.ok).length, short: rs.filter(r => !r.ok).length, shortCells, forJobs: tot('forJobs'), topup: tot('topup'), total: tot('total'),
       next: active[0]?.planned_on || null, cost: costKnown, unpriced } };
 }
 
@@ -138,7 +168,7 @@ ROUTES.planner = {
       `<div class="board b6">
         <div class="kpi"><div class="n">${k.active}</div><div class="l">Active jobs</div></div>
         <div class="kpi ok"><div class="n">${k.ready}</div><div class="l">Can be done from shelf</div></div>
-        <div class="kpi ${k.short ? 'bad' : ''}"><div class="n">${k.short}</div><div class="l">Short</div></div>
+        <div class="kpi ${k.short ? 'bad' : ''}"><div class="n">${k.short}</div><div class="l">Jobs short<span class="sub"> · ${plural(k.shortCells, 'shortfall cell')}</span></div></div>
         <div class="kpi ${k.forJobs ? 'warn' : ''}"><div class="n">${fq(k.total)}</div><div class="l">Units to ship in<span class="sub"> · ${fq(k.forJobs)} for jobs, ${fq(k.topup)} safety</span></div></div>
         <div class="kpi"><div class="n">${k.next ? fmonthD(k.next) : '—'}</div><div class="l">Next job</div></div>
         ${canSeePrices() ? `<div class="kpi"><div class="n">${usd(k.cost)}</div><div class="l">Est. ship-in cost${k.unpriced ? ` · ${k.unpriced} line${k.unpriced === 1 ? '' : 's'} not priced` : ''}</div></div>` : ''}</div>
@@ -176,9 +206,12 @@ ROUTES.planner = {
       const net = g.stock - g.need;
       return `<td class="num"><b class="${net < 0 ? 'neg' : g.need ? 'pos' : ''}">${net < 0 ? '(' + fq(-net) + ')' : fq(net)}</b><div class="sub">${fq(g.stock)} on shelf${g.need ? ' · ' + fq(g.need) + ' needed' : ''}</div></td>`;
     };
-    return `<section class="panel"><header><h2>Complete BHAs on the shelf now</h2><span class="meta">Packer, crossover, safety joint, coupling, ${esc(cfg.safety_blank || '10 ft')} blank and bull nose</span></header>
-      <div class="tablewrap"><table class="t"><thead><tr><th>Tubing size</th><th class="num">Complete BHAs</th><th>Limited by</th><th class="num">Screens (all µ)</th><th class="num">Safety target</th></tr></thead><tbody>
-      ${E.bha.map(b => `<tr><td><b>${esc(b.size)}</b></td><td class="num"><b>${b.n}</b></td><td>${esc(b.limitedBy)}</td><td class="num">${fq(b.screens)}</td><td class="num">${fq((cfg.safety_bhas || {})[b.size] || 0)}</td></tr>`).join('')}</tbody></table></div></section>
+    return `<section class="panel"><header><h2>Complete BHAs on the shelf</h2><span class="meta">Packer, crossover, safety joint, coupling, ${esc(cfg.safety_blank || '10 ft')} blank and bull nose · screens not included</span></header>
+      <div class="tablewrap"><table class="t plbha"><thead><tr><th>Tubing size</th><th class="num">On the shelf now</th><th>Limited by <span class="sub">(below the safety target)</span></th><th class="num">Left after jobs</th><th class="num">Safety target</th><th class="num">Above / (below) target</th><th class="num">Screens (all µ)</th></tr></thead><tbody>
+      ${E.bha.map(b => `<tr><td><b>${esc(b.size)}</b>${E.pools.some(pl => pl.sizes.includes(b.size)) ? ` <span class="chip muted">shared ${esc(cfg.safety_blank || '10 ft')} blanks</span>` : ''}</td><td class="num"><b>${b.n}</b></td>
+        <td class="${b.limitedBy === 'None' ? 'sub' : ''}">${esc(b.limitedBy)}</td><td class="num"><b>${b.after}</b></td><td class="num">${fq(b.target)}</td>
+        <td class="num"><b class="${b.vs < 0 ? 'neg' : 'pos'}">${b.vs < 0 ? '(' + fq(-b.vs) + ')' : fq(b.vs)}</b></td><td class="num">${fq(b.screens)}</td></tr>`).join('')}</tbody></table></div>
+      ${E.pools.map(pl => `<div class="body plpool">${ico('box')}<span><b>${pl.sizes.map(esc).join(' and ')} share ${esc(pl.blank)} blanks</b> (${fq(pl.blanks)} on the shelf): <b>${pl.total} complete BHA${pl.total === 1 ? '' : 's'} in total</b> across ${pl.sizes.length === 2 ? 'both sizes' : 'these sizes'}, not ${pl.sizes.map(z => E.bha.find(b => b.size === z)?.n ?? 0).join(' + ')}. The numbers above show each size on its own.</span></div>`).join('')}</section>
       <section class="panel"><header><h2>Surplus / (shortfall) after all active jobs</h2><span class="meta">Live shelf stock, in store and available</span></header>
       <div class="tablewrap"><table class="t"><thead><tr><th>Part</th>${sizes.map(z => `<th class="num">${esc(z)}</th>`).join('')}</tr></thead><tbody>
       ${P.parts.map(p => `<tr><td class="full"><div class="name">${esc(partName(p))}</div>${p.kind === 'service' ? '<div class="sub">Reusable: 1 per size</div>' : ''}</td>${sizes.map(z => cell(p, z)).join('')}</tr>`).join('')}</tbody></table></div></section>`;
@@ -203,12 +236,12 @@ ROUTES.planner = {
       const l = E.linkOf(p.id, z); const mode = l?.mode || 'items';
       const body = mode === 'not_needed' ? '<span class="sub">Not needed</span>' : mode === 'not_carried' ? '<span class="sub">Not carried</span>'
         : (l?.item_ids || []).length ? (l.item_ids.map(i => its.get(+i)).filter(Boolean).map(i => `<div>${tag(i.code)} <span class="sub">${fq(E.avail[i.id] || 0)}</span></div>`).join('')) : '<b class="neg">Not linked</b>';
-      return `<td class="plcell" data-part="${p.id}" data-size="${esc(z)}">${body}${l?.pool ? `<div class="sub">Shared stock: ${esc(l.pool)}</div>` : ''}</td>`;
+      return `<td class="plcell" data-part="${p.id}" data-size="${esc(z)}">${body}${l?.pool ? `<div class="sub">Shared stock: ${esc(l.pool)}</div>` : ''}${l?.setting && mode !== 'not_needed' ? `<div class="sub">${esc(l.setting)} jobs only</div>` : ''}</td>`;
     };
     const priced = [...new Set(P.links.flatMap(l => l.item_ids || []).map(Number))].map(i => its.get(i)).filter(Boolean).sort((a, b) => (a.code || '').localeCompare(b.code || ''));
     return `<div class="notice">Each part is linked to the Nest item(s) it uses for each tubing size. Nest linked them by part number from your Excel; check them, especially the service tools. Click a cell to change it. Sizes with the same <b>shared stock</b> name use one pool (for example 10 ft blanks for 2-3/8" and 2-7/8").</div>
       <section class="panel"><header><h2>Parts and Nest items</h2><span class="meta">${plural(P.parts.length, 'part')}</span><div class="right"><button class="btn small primary" id="pl-newpart">${ico('plus')}Add part</button></div></header><div class="tablewrap"><table class="t plsetup"><thead><tr><th>Part</th>${sizes.map(z => `<th>${esc(z)}</th>`).join('')}</tr></thead><tbody>
-      ${[...P.parts].sort((a, b) => a.sort - b.sort).map(p => `<tr><td class="name"><button type="button" class="linkbtn" data-part-edit="${p.id}">${esc(partName(p))}</button><div class="sub">${esc(PART_KINDS[p.kind]?.[0] || '')}${p.safety ? ' · counts in a complete BHA' : ''}${p.setting ? ' · ' + esc(p.setting) + ' only' : ''}${p.id > 20 ? ' · added' : ''}</div></td>${sizes.map(z => cell(p, z)).join('')}</tr>`).join('')}</tbody></table></div></section>
+      ${[...P.parts].sort((a, b) => a.sort - b.sort).map(p => `<tr><td class="name"><button type="button" class="linkbtn" data-part-edit="${p.id}">${esc(partName(p))}</button><div class="sub">${esc(PART_KINDS[p.kind]?.[0] || '')}${p.safety ? ' · counts in a complete BHA' : ''}${p.setting ? ' · ' + esc(p.setting) + ' only' : ''}${stdPart(p) ? '' : ' · added'}</div></td>${sizes.map(z => cell(p, z)).join('')}</tr>`).join('')}</tbody></table></div></section>
       <section class="panel"><header><h2>Safety stock</h2></header><form class="body" id="pl-cfg">
         <div class="tablewrap"><table class="t"><thead><tr><th></th>${sizes.map(z => `<th>${esc(z)}</th>`).join('')}</tr></thead><tbody>
         <tr><td>Complete BHAs to keep on the shelf after jobs</td>${sizes.map(z => `<td><input type="number" min="0" step="1" name="sb_${esc(z)}" value="${+(cfg.safety_bhas || {})[z] || 0}" style="width:80px"></td>`).join('')}</tr>
@@ -334,12 +367,13 @@ function planRow(x, j) {
 
 function editPlanLink(P, partId, size) {
   const p = P.parts.find(x => x.id === partId); const l = P.links.find(x => x.part_id === partId && x.size === size) || { mode: 'items', item_ids: [], pool: '' };
-  const picked = new Set((l.item_ids || []).map(Number)); const dept = planCfg().department_id;
+  const picked = new Set((l.item_ids || []).map(Number)); const cfg = planCfg(); const dept = cfg.department_id;
   return modal({
     title: `${partName(p)} · ${size}`, wide: true, submit: 'Save',
     sub: 'Choose the Nest item(s) this part uses for this tubing size. Stock of all chosen items is added together.',
     body: `<div class="row2"><label class="f">For this size<select name="mode">${opt('items', 'Use these Nest items', l.mode)}${opt('not_needed', 'Not needed for this size', l.mode)}${opt('not_carried', 'Not carried (always short if a job needs it)', l.mode)}</select></label>
       <label class="f">Shared stock name<span class="hint">Give sizes that share stock the same name, or leave blank.</span><input type="text" name="pool" value="${esc(l.pool || '')}" placeholder="e.g. small"></label></div>
+      ${p.kind === 'service' ? `<label class="f">Needed for this size when the job uses<span class="hint">${p.setting ? `The part is set to ${esc(p.setting)} only. Pick a tool here to change that for ${esc(size)}.` : 'Leave on “Any setting tool” unless this size only needs it for one tool.'}</span><select name="setting"><option value="">${p.setting ? 'Same as the part (' + esc(p.setting) + ' only)' : 'Any setting tool'}</option>${(cfg.tools || ['EMST', 'TTS']).map(t => opt(t, t + ' jobs only', l.setting)).join('')}</select></label>` : ''}
       <input type="search" id="lk-q" placeholder="Search Thru-Tubing items by code or description" autocomplete="off"><div id="lk-res" class="pickres"></div>
       <h3 class="grp">Linked items</h3><div id="lk-sel"></div>`,
     onOpen: d => {
@@ -359,7 +393,9 @@ function editPlanLink(P, partId, size) {
       drawSel();
     },
     onSubmit: async x => {
-      await q(sb.from('plan_links').upsert({ part_id: partId, size, mode: x.mode, item_ids: x.mode === 'items' ? [...picked] : [], pool: (x.pool || '').trim() || null }));
+      const row = { part_id: partId, size, mode: x.mode, item_ids: x.mode === 'items' ? [...picked] : [], pool: (x.pool || '').trim() || null };
+      if (p.kind === 'service') row.setting = x.setting || null;
+      await q(sb.from('plan_links').upsert(row));
       toast('Saved'); S.plan = null; render({ quiet: true });
     }
   });
@@ -411,7 +447,8 @@ async function planReport(kind) {
   const jobRows = active.map(({ j, r }) => ({ m: fmonthD(j.planned_on), well: j.title, cust: j.customer || '', size: j.tubing_size, bha: bhaText(j), chk: shortText(r), _st: { chk: r.ok ? 'ok' : 'overdue' } }));
   const ship = E.lines.filter(l => l.total > 0).sort((a, b) => a.part.sort - b.part.sort || a.label.localeCompare(b.label))
     .map(l => ({ part: partName(l.part), size: l.label, jobs: l.forJobs || '', top: l.topup || '', tot: l.total, unit: l.unit == null ? (pr ? 'no price' : '') : usd(l.unit), cost: l.cost == null ? '' : usd(l.cost), _unit: l.unit, _cost: l.cost }));
-  const bha = E.bha.map(b => ({ size: b.size, n: b.n, lim: b.limitedBy, scr: b.screens, tgt: (cfg.safety_bhas || {})[b.size] || 0 }));
+  const bha = E.bha.map(b => ({ size: b.size, n: b.n, lim: b.limitedBy, after: b.after, tgt: b.target, vs: b.vs < 0 ? `(${fq(-b.vs)})` : fq(b.vs), scr: b.screens }));
+  const poolNote = E.pools.map(pl => `${pl.sizes.join(' and ')} share ${pl.blank} blanks (${fq(pl.blanks)} on the shelf): ${pl.total} complete BHA${pl.total === 1 ? '' : 's'} in total across both sizes. Each row shows the size on its own.`).join(' ');
   const kpis = [{ label: 'Active jobs', value: k.active }, { label: 'Can be done from shelf', value: k.ready }, { label: 'Short', value: k.short, tone: k.short ? 'bad' : '' },
     { label: 'Units to ship in', value: fq(k.total) }, ...(pr ? [{ label: 'Est. ship-in cost (USD)', value: usd(k.cost) }] : [{ label: 'Next job', value: k.next ? fmonthD(k.next) : '-' }])];
   if (kind === 'xlsx') {
@@ -421,8 +458,9 @@ async function planReport(kind) {
       { name: 'Ship-in order', title: 'Ship-in order', subtitle, columns: [{ header: 'Part', key: 'part', width: 30, bold: true }, { header: 'Tubing size', key: 'size', width: 26 }, { header: 'For jobs', key: 'jobs', width: 10, type: 'num' },
         { header: 'Safety top-up', key: 'top', width: 12, type: 'num' }, { header: 'Total', key: 'tot', width: 9, type: 'num', bold: true }, ...(pr ? [{ header: 'Unit price (USD)', key: '_unit', width: 15, type: 'num' }, { header: 'Est. cost (USD)', key: '_cost', width: 15, type: 'num' }] : [])],
         rows: ship, totals: ['jobs', 'top', 'tot', ...(pr ? ['_cost'] : [])], note: pr ? `Prices from the last purchase orders.${k.unpriced ? ` The total cost excludes ${plural(k.unpriced, 'line')} with no price.` : ''}` : '' },
-      { name: 'BHAs on shelf', title: 'Complete BHAs on the shelf now', subtitle, columns: [{ header: 'Tubing size', key: 'size', width: 12 }, { header: 'Complete BHAs', key: 'n', width: 14, type: 'num', bold: true },
-        { header: 'Limited by', key: 'lim', width: 40, wrap: true }, { header: 'Screens (all µ)', key: 'scr', width: 14, type: 'num' }, { header: 'Safety target', key: 'tgt', width: 13, type: 'num' }], rows: bha }] });
+      { name: 'BHAs on shelf', title: 'Complete BHAs on the shelf', subtitle, note: poolNote, columns: [{ header: 'Tubing size', key: 'size', width: 12 }, { header: 'On the shelf now', key: 'n', width: 15, type: 'num', bold: true },
+        { header: 'Limited by (below the safety target)', key: 'lim', width: 40, wrap: true }, { header: 'Left after jobs', key: 'after', width: 14, type: 'num' }, { header: 'Safety target', key: 'tgt', width: 13, type: 'num' },
+        { header: 'Above / (below) target', key: 'vs', width: 18 }, { header: 'Screens (all µ)', key: 'scr', width: 14, type: 'num' }], rows: bha }] });
     return;
   }
   await brandPdf({ file: `GANKCO_Inventory_vs_Jobs_${localISO(0)}.pdf`, title, subtitle, kpis,
@@ -435,8 +473,8 @@ async function planReport(kind) {
         { header: 'For jobs', dataKey: 'jobs', width: 18, align: 'right' }, { header: 'Safety top-up', dataKey: 'top', width: 24, align: 'right' }, { header: 'Total', dataKey: 'tot', width: 15, align: 'right' },
         ...(pr ? [{ header: 'Unit (USD)', dataKey: 'unit', width: 24, align: 'right' }, { header: 'Est. cost (USD)', dataKey: 'cost', width: 28, align: 'right' }] : [])],
         rows: ship.length ? [...ship, { part: 'Total', size: pr && k.unpriced ? `Cost excludes ${plural(k.unpriced, 'line')} with no price` : '', jobs: fq(k.forJobs), top: fq(k.topup), tot: fq(k.total), unit: '', cost: pr ? usd(k.cost) : '', _total: true }] : [{ part: 'Nothing to ship in' }] },
-      { heading: 'Complete BHAs on the shelf now', columns: [{ header: 'Tubing size', dataKey: 'size', width: 30 }, { header: 'Complete BHAs', dataKey: 'n', width: 30, align: 'right' }, { header: 'Limited by', dataKey: 'lim' },
-        { header: 'Screens (all µ)', dataKey: 'scr', width: 30, align: 'right' }, { header: 'Safety target', dataKey: 'tgt', width: 28, align: 'right' }], rows: bha },
+      { heading: 'Complete BHAs on the shelf', note: poolNote, columns: [{ header: 'Tubing size', dataKey: 'size', width: 24 }, { header: 'On shelf now', dataKey: 'n', width: 22, align: 'right' }, { header: 'Limited by (below safety target)', dataKey: 'lim' },
+        { header: 'Left after jobs', dataKey: 'after', width: 24, align: 'right' }, { header: 'Safety target', dataKey: 'tgt', width: 22, align: 'right' }, { header: 'Above / (below)', dataKey: 'vs', width: 24, align: 'right' }, { header: 'Screens', dataKey: 'scr', width: 18, align: 'right' }], rows: bha },
     ],
     signatures: [mySignature('Prepared by', `${title} · ${subtitle}`)] });
 }
@@ -470,7 +508,7 @@ function editPlanPart(p) {
   const kindRadios = Object.entries(PART_KINDS).map(([k, [l, d]], i) => `<label class="mopt"><input type="radio" name="kind" value="${k}" ${i === 0 ? 'checked' : ''}><span><b>${esc(l)}</b><span class="sub">${esc(d)}</span></span></label>`).join('');
   return modal({
     title: isNew ? 'Add a planner part' : `Edit ${partName(p)}`, submit: isNew ? 'Add part' : 'Save', wide: isNew,
-    sub: isNew ? 'After adding it, link it to the Nest item(s) it uses for each tubing size, in the table.' : `${esc(PART_KINDS[p.kind]?.[0] || '')}${p.id <= 20 ? ' · one of the 20 parts from the Excel tracker' : ''}`,
+    sub: isNew ? 'After adding it, link it to the Nest item(s) it uses for each tubing size, in the table.' : `${esc(PART_KINDS[p.kind]?.[0] || '')}${stdPart(p) ? ' · one of the parts from the Excel tracker' : ''}`,
     body: `${isNew ? `<div class="pjf-sec">Type of part</div><div class="mscope">${kindRadios}</div><div class="pjf-sec">Details</div>` : ''}
       <div class="row2"><label class="f">Name<input type="text" name="tool" required value="${esc(p?.tool || '')}" placeholder="Swell Packer"></label>
         <label class="f"><span class="pp-spec-l">${p && ['blank', 'screen'].includes(p.kind) ? (p.kind === 'blank' ? 'Length' : 'Micron') : 'Size / spec'}</span><span class="hint pp-spec-h">${p && ['blank', 'screen'].includes(p.kind) ? 'Can’t be changed: jobs use it.' : 'Optional. Leave empty for standard.'}</span>
@@ -479,7 +517,7 @@ function editPlanPart(p) {
         <label class="f">Per complete BHA<span class="hint">For the safety-stock count.</span><input type="number" min="1" step="1" name="per" value="${p ? +p.per_bha || 1 : 1}"></label>
         <label class="f pp-svc" ${p?.kind === 'service' ? '' : 'hidden'}>Only with setting tool<select name="setting"><option value="">Any</option>${(cfg.tools || ['EMST', 'TTS']).map(t => opt(t, t, p?.setting)).join('')}</select></label></div>
       <label class="check pp-safe"><input type="checkbox" name="safety" ${p ? (p.safety ? 'checked' : '') : 'checked'}> Counts toward a complete BHA on the shelf (and the safety top-up)</label>
-      ${!isNew && p.id > 20 ? '<div class="mt"><button type="button" class="btn small link danger" id="pp-del">Remove this part from the planner</button></div>' : ''}`,
+      ${!isNew && !stdPart(p) ? '<div class="mt"><button type="button" class="btn small link danger" id="pp-del">Remove this part from the planner</button></div>' : ''}`,
     onOpen: d => {
       const f = $('form', d);
       const sync = () => {

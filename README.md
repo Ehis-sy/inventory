@@ -1,15 +1,45 @@
-# GANKCO Nest: version 2.6 update
+# GANKCO Nest: version 2.6.2 update
 
 *Built to support engineered solutions.*
 
 ## Where things live
 
-
-
 - **Website:** nest.gankcoenergy.com, hosted on GitHub Pages from **github.com/gankco-energy/gankco-nest** (organization owned by the Nest Gmail; Ehis is also an Owner).
 - **Database and sign-in:** Supabase project in the **GANKCO Energy Services** organization (Nest Gmail; Ehis also an Owner).
 - **Emails:** sent by Brevo from **nest-alerts@gankcoenergy.com** as "GANKCO Nest". Sign-in emails use Supabase's custom SMTP (templates in Supabase → Authentication → Emails → Templates). Alert emails use the Brevo API key saved in Supabase Vault as `brevo_api_key`, on a schedule (pg_cron).
 - **DNS (company IT):** `nest` CNAME → `gankco-energy.github.io`, plus the Brevo verification records.
+
+## Install 2.6.2 (about 5 minutes)
+
+1. **Lock Nest:** **Settings → Maintenance → Schedule maintenance → Inventory → Start now** (the Job planner is part of Inventory).
+2. **Supabase → SQL Editor → New query:** paste all of **`9-nest-v2.6.2-upgrade.sql`** and press **Run**. It should end with **Nest 2.6.2 installed**. It's safe to run again.
+3. **GitHub:** unzip **`gankco-nest-v2.6.2.zip`** and upload everything into **github.com/gankco-energy/gankco-nest**, then commit. Keep the `CNAME` file.
+4. Reload Nest, open **Job planner → Setup** and check the two extension rods (below). Then press **End maintenance**.
+
+### What's new in 2.6.2: the Job planner follows the Excel tracker exactly
+
+- **Complete BHAs on the shelf** uses the Excel's rules. *Limited by* lists the parts below the safety target and the 10 ft blanks short of the packers, or **None**.
+- New columns: **Left after jobs** and **Above / (below) target**, as in the Excel's safety stock section.
+- A line under the table shows the **total** for the sizes that share 10 ft blanks (2-3/8" and 2-7/8"), so the two sizes aren't added together by mistake.
+- The **Jobs short** tile also shows the Excel's **shortfall cells**.
+- The extension rod is split into the Excel's two rods:
+  - **Extension Rod TTS (2-3/8"–3-1/2") + EMST (2-7/8"–3-1/2")**: one shared set, needed once. It's needed on 2-3/8" for TTS jobs only, and on 2-7/8" and 3-1/2" for any job. It's not needed on 4-1/2".
+  - **Extension Rod 2-3/8" EMST**: needed on 2-3/8" EMST jobs only.
+  - The SQL links the first to **GES-TT-RT-5011-238-A-075** and the second to **GES-TT-RT-FAB-EXT-001**. Swap them on **Setup** if that's the wrong way round.
+- On **Setup**, a service tool's cell now has **"Needed for this size when the job uses"**. Use it to make a tool apply to TTS jobs only or EMST jobs only, for one size.
+- The management report (PDF and Excel) has the same columns and the shared-blanks line.
+- **Inventory:** an item with nothing left shows **None left** instead of **Low**.
+
+**Checked against the Excel:** Nest was loaded with the Excel's stock count and its 8 jobs. It matched every result the Excel shows (37 checks):
+- complete BHAs 2 / 2 / 1 / 0, with the same *Limited by* text;
+- 11 shortfall cells and 20 units for jobs;
+- every surplus/shortfall cell and every job's stock check;
+- left after jobs, above/below target, safety top-ups and EMST backups;
+- 51 units to ship in total.
+
+---
+
+# Earlier: version 2.6 update
 
 ## Install 2.6 (about 15 minutes, once)
 

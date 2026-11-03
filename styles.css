@@ -801,3 +801,8 @@ iframe.aprev { width: 100%; min-height: 520px; border: 1px solid var(--line); bo
 .linkbtn:hover { color: var(--brand-deep); text-decoration: underline; }
 .plsetup td.name .sub { font-weight: 400; font-size: 12px; }
 @media (max-width: 600px) { .atry .row3, .row3.mt { grid-template-columns: 1fr; } .pricebox b { font-size: 19px; } .ordbox { flex-direction: column; align-items: flex-start; } }
+/* 2.6.2 planner: complete BHAs */
+.plpool { display: flex; gap: 10px; align-items: flex-start; border-top: 1px solid var(--line); font-size: 13px; line-height: 1.5; }
+.plpool svg { width: 18px; height: 18px; flex: 0 0 18px; margin-top: 1px; color: var(--muted); }
+.plbha td.sub { color: var(--muted); }
+.plbha .chip { margin-left: 6px; vertical-align: 1px; }
