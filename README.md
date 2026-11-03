@@ -5,7 +5,7 @@
 ## Install 2.4 (about 5 minutes)
 
 1. **Supabase → SQL Editor → New query:** paste all of **`5-nest-v2.4-upgrade.sql`** and press **Run**. Wait for **Success**. It's safe to run again.
-2. **GitHub:** unzip **`gankco-nest-v2.4.zip`** and upload everything from the folder into your `inventory` repository (**Add file → Upload files**), then commit. Keep the `CNAME` file.
+2. **GitHub:** unzip **`gankco-nest-v2.4.zip`** and upload everything from the folder into your `gankco-nest` repository (renamed from `inventory`) (**Add file → Upload files**), then commit. Keep the `CNAME` file.
 3. After 1–2 minutes, anyone with Nest open sees **"A new version is available: Reload"**.
 
 ## After installing
@@ -18,7 +18,8 @@
 ## What's new in 2.4
 
 - **Job planner** (menu → Job planner, for everyone). Your "Inventory vs Job Tracker" Excel, built into Nest for Thru-Tubing screen hang-off BHAs:
-  - **Add upcoming job:** well, customer, month, tubing size, setting tool, blank, screens and quantities. A live check shows **✔ Can be done from shelf** or **✖ Short: …** while you type.
+  - **Add upcoming job:** a job sheet with three sections (Job, String, BHA make-up) and a **Stock check** panel on the right that updates as you type. Each BHA row shows how many are free on the shelf for this job (✔ or ✖), plus the job's place in the date order.
+  - **The jobs list** shows a **Ready** or **Short N parts** badge on each job, with the missing parts underneath.
   - Stock comes from **live Nest stock** (in store, available, all locations). There's no separate count to enter.
   - **Same rules as the sheet:** jobs are checked in date order, 10 ft blanks are pooled for 2-3/8" and 2-7/8", PCM and EMST are shared by 2-7/8" and 3-1/2", and service tools are needed once per size.
   - **Request** on a job creates a draft materials request with the right items. Once it's issued, the job counts as **Run** and its parts aren't counted again. This replaces the "Done" rows.

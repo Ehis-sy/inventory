@@ -68,12 +68,12 @@ function planEngine(P, override) {
     const r = { job: j, lines: [], short: [] };
     demands(j).forEach(d => {
       const g = d.g; let need = d.qty;
-      if (d.part.kind === 'service') { if (g.svc) { r.lines.push({ ...d, need: 0, got: 0, reused: true }); return; } need = 1; g.svc = true; }
+      if (d.part.kind === 'service') { if (g.svc) { r.lines.push({ ...d, need: 0, got: 0, reused: true, before: g.rem }); return; } need = 1; g.svc = true; }
       g.need += need;
-      if (d.notCarried) { g.short += need; r.short.push({ ...d, need, missing: need, reason: 'Not carried' }); r.lines.push({ ...d, need, got: 0 }); return; }
-      const got = Math.min(g.rem, need); g.rem -= got; const miss = need - got;
+      if (d.notCarried) { g.short += need; r.short.push({ ...d, need, missing: need, reason: 'Not carried' }); r.lines.push({ ...d, need, got: 0, before: 0, missing: need }); return; }
+      const before = g.rem; const got = Math.min(g.rem, need); g.rem -= got; const miss = need - got; d.before = before;
       if (miss > 0) { g.short += miss; r.short.push({ ...d, need, missing: miss, reason: g.linked ? 'Not enough on the shelf' : 'No Nest item linked' }); }
-      r.lines.push({ ...d, need, got });
+      r.lines.push({ ...d, need, got, missing: miss, reason: miss > 0 ? (g.linked ? 'Not enough on the shelf' : 'No Nest item linked') : '' });
     });
     r.ok = !r.short.length; results.set(j.id ?? 'new', r);
   });
@@ -148,14 +148,19 @@ ROUTES.planner = {
     const me = S.viewAs ? null : S.profile.id;
     return `<div class="filters"><div class="seg" id="pl-view">${[['active', 'Active'], ['hold', 'On hold'], ['run', 'Run'], ['all', 'All']].map(([v, l]) => `<button data-v="${v}" class="${PL.view === v ? 'on' : ''}">${l}</button>`).join('')}</div>
       <span class="muted">Jobs are checked in date order: earlier jobs get the stock first.</span></div>
-      <section class="panel"><div class="tablewrap"><table class="t stack"><thead><tr><th>Month</th><th>Well</th><th>Customer</th><th>Tubing</th><th>BHA</th><th>Stock check</th><th></th></tr></thead><tbody>
+      <section class="panel"><div class="tablewrap"><table class="t stack pljobs"><thead><tr><th>Month</th><th>Well</th><th>Tubing</th><th>BHA</th><th>Stock check</th><th></th></tr></thead><tbody>
       ${list.length ? list.map(j => { const r = E.results.get(j.id); const eff = jobEff(j);
-        return `<tr><td class="nowrap">${fmonthD(j.planned_on)}</td><td class="full"><div class="name">${esc(j.title)}</div>${eff !== 'planned' ? chip(...PLAN_STATUS[eff]) : ''}</td><td>${esc(j.customer || '')}</td><td class="nowrap">${esc(j.tubing_size)}</td>
-          <td class="sub">${esc(bhaText(j))}</td>
-          <td>${eff === 'planned' ? `<span class="${r?.ok ? 'pos' : 'neg'}"><b>${esc(shortText(r))}</b></span>` : eff === 'run' ? '<span class="sub">Run: not counted</span>' : '<span class="sub">On hold: not counted</span>'}
+        const badge = eff !== 'planned' ? chip(...PLAN_STATUS[eff]) : r?.ok ? chip('ok', 'Ready') : chip('overdue', `Short ${plural(r.short.length, 'part')}`);
+        const detail = eff === 'planned' ? (r?.ok ? 'Can be done from the shelf' : r.short.map(x => `${fq(x.missing)} × ${partName(x.part)}${x.size !== j.tubing_size ? ` (${x.size})` : ''}${x.reason !== 'Not enough on the shelf' ? ` · ${x.reason === 'Not carried' ? 'not carried' : 'no Nest item linked'}` : ''}`).join(', '))
+          : eff === 'run' ? 'Run: no longer counted' : eff === 'hold' ? 'On hold: not counted' : 'Cancelled';
+        return `<tr class="${eff === 'planned' && !r?.ok ? 'is-short' : ''}"><td class="nowrap">${fmonthD(j.planned_on)}</td>
+          <td class="full"><div class="name">${esc(j.title)}</div><div class="sub">${esc(j.customer || '')}</div></td>
+          <td class="nowrap"><b>${esc(j.tubing_size)}</b><div class="sub">${esc(j.setting_tool)}</div></td>
+          <td class="sub">${esc(bhaText(j).replace(/ · (EMST|TTS)$/, '').replace(/^(EMST|TTS)$/, '—'))}</td>
+          <td class="plchk">${badge}<div class="sub ${eff === 'planned' && !r?.ok ? 'neg' : ''}">${esc(detail)}</div>
             ${j.mr ? `<div class="sub"><a href="#/job/${j.mr.id}">${esc(j.mr.job_no)}</a> · ${esc((JOB_STATUS[j.mr.status] || [0, j.mr.status])[1])}</div>` : ''}</td>
-          <td class="num nowrap">${isWriter() ? `<button class="btn small" data-edit="${j.id}">Edit</button>${!j.mr && eff === 'planned' ? ` <button class="btn small tagbtn" data-mr="${j.id}">${ico('truck')}Request</button>` : ''}${(j.created_by === me || isAdmin()) ? ` <button class="btn small link danger" data-del="${j.id}">Delete</button>` : ''}` : ''}</td></tr>`; }).join('')
-        : `<tr><td colspan="7" class="empty">${PL.view === 'active' ? 'No upcoming jobs. Press <b>Add upcoming job</b> to check one against the shelf.' : 'Nothing here.'}</td></tr>`}</tbody></table></div></section>`;
+          <td class="num nowrap">${isWriter() ? `<div class="btngrp"><button class="btn small" data-edit="${j.id}">${ico('sign')}Edit</button>${!j.mr && eff === 'planned' ? `<button class="btn small" data-mr="${j.id}">${ico('truck')}Request</button>` : ''}${(j.created_by === me || isAdmin()) ? `<button class="btn small" data-del="${j.id}" aria-label="Delete" title="Delete">${ico('trash')}</button>` : ''}</div>` : ''}</td></tr>`; }).join('')
+        : `<tr><td colspan="6" class="empty">${PL.view === 'active' ? 'No upcoming jobs. Press <b>Add upcoming job</b> to check one against the shelf.' : 'Nothing here.'}</td></tr>`}</tbody></table></div></section>`;
   },
   summary(P, E) {
     const cfg = planCfg(); const sizes = cfg.sizes || [];
@@ -247,41 +252,69 @@ ROUTES.planner = {
 function editPlanJob(j) {
   const cfg = planCfg(); const sizes = cfg.sizes || []; const P = S.plan;
   const q0 = j?.qty || {};
-  const num = (n, v, w = 70) => `<input type="number" min="0" step="1" name="${n}" value="${v ?? ''}" style="width:${w}px">`;
+  const seg = (name, vals, cur) => `<div class="segi">${vals.map(v => `<label><input type="radio" name="${name}" value="${esc(v)}" ${v === cur ? 'checked' : ''}><span>${esc(v)}</span></label>`).join('')}</div>`;
+  const qin = (n, v) => `<input type="number" min="0" step="1" name="${n}" value="${v ?? ''}" class="qin">`;
+  const part = (tool, spec) => P.parts.find(p => p.tool === tool && (spec == null || p.spec === spec));
+  const rows = [
+    ['packer', 'Paragon II Packer', 'Std', qin('q_packer', q0.packer ?? 1)],
+    ['xo', 'Hang-off Crossover', 'Std', qin('q_xo', q0.xo ?? 1)],
+    ['sj', 'Safety Joint', 'Std', qin('q_sj', q0.sj ?? 1)],
+    ['coupling', 'Beveled Coupling', 'Std', qin('q_coupling', q0.coupling ?? 1)],
+    ['blank', 'Blank Pipe', `<select name="blen" class="inline"><option value="">None</option>${(cfg.blanks || []).map(b => opt(b, b, j ? j.blank_length : '10 ft')).join('')}</select>`, qin('bqty', j ? j.blank_qty : 1)],
+    ['screen', 'Deltapore Screen', `<select name="mic" class="inline"><option value="">None</option>${(cfg.microns || []).map(m => opt(m, m.replace(' micron', 'µ'), j?.screen_micron)).join('')}</select>
+      <select name="ssize" class="inline" title="Screen size, if different from the tubing"><option value="">Same size</option>${sizes.map(z => opt(z, z, j?.screen_size)).join('')}</select>`, qin('sqty', j ? j.screen_qty : 1)],
+    ['bullnose', 'Bull Nose', 'Std', qin('q_bullnose', q0.bullnose ?? 1)],
+    ['pcm', 'PCM', 'Std', qin('q_pcm', q0.pcm ?? 1)],
+  ];
   return modal({
-    title: j ? `Edit ${j.title}` : 'Add upcoming job', wide: true, submit: j ? 'Save' : 'Add job',
-    sub: 'Fill in the BHA for the well. The check below updates as you type, against what’s on the shelf now.',
-    body: `<div class="row2"><label class="f">Well<input type="text" name="title" required value="${esc(j?.title || '')}" placeholder="e.g. Olomoro 39L"></label>
-        <label class="f">Customer<input type="text" name="customer" value="${esc(j?.customer || '')}" placeholder="e.g. HEOSL - OML 30"></label></div>
-      <div class="row3"><label class="f">Planned month<input type="month" name="month" required value="${esc((j?.planned_on || localISO(0)).slice(0, 7))}"></label>
-        <label class="f">Tubing size<select name="size">${sizes.map(z => opt(z, z, j?.tubing_size || sizes[2])).join('')}</select></label>
-        <label class="f">Setting tool<select name="tool">${(cfg.tools || ['EMST', 'TTS']).map(t => opt(t, t, j?.setting_tool || 'EMST')).join('')}</select></label></div>
-      <div class="row3"><label class="f">Blank length<select name="blen"><option value="">No blank</option>${(cfg.blanks || []).map(b => opt(b, b, j ? j.blank_length : '10 ft')).join('')}</select></label>
-        <label class="f">Blank qty${num('bqty', j ? j.blank_qty : 1)}</label><div></div></div>
-      <div class="row3"><label class="f">Screen micron<select name="mic"><option value="">No screen</option>${(cfg.microns || []).map(m => opt(m, m, j?.screen_micron)).join('')}</select></label>
-        <label class="f">Screen qty${num('sqty', j ? j.screen_qty : 1)}</label>
-        <label class="f">Screen size (if different)<select name="ssize"><option value="">Same as tubing</option>${sizes.map(z => opt(z, z, j?.screen_size)).join('')}</select></label></div>
-      <div class="f">Quantities<div class="qgrid">${QTY_FIELDS.map(([k, l]) => `<label class="f">${esc(l)}${num('q_' + k, q0[k] ?? 1)}</label>`).join('')}</div></div>
-      <div class="row2"><label class="f">Status<select name="status">${Object.entries(PLAN_STATUS).map(([k, [, l]]) => opt(k, l, j?.status || 'planned')).join('')}</select></label>
-        <label class="f">Notes<input type="text" name="notes" value="${esc(j?.notes || '')}"></label></div>
-      <div id="pl-live" class="pllive"></div>`,
+    title: j ? `Edit ${j.title}` : 'Add upcoming job', wide: true, submit: j ? 'Save changes' : 'Add job',
+    sub: `${esc(lineName(cfg.department_id))} · screen hang-off BHA`,
+    body: `<div class="pjf"><div class="pjf-main">
+      <div class="pjf-sec">Job</div>
+      <div class="row2"><label class="f">Well<input type="text" name="title" required value="${esc(j?.title || '')}" placeholder="Olomoro 39L"></label>
+        <label class="f">Customer<input type="text" name="customer" value="${esc(j?.customer || '')}" placeholder="HEOSL - OML 30"></label></div>
+      <div class="row2"><label class="f">Planned month<input type="month" name="month" required value="${esc((j?.planned_on || localISO(0)).slice(0, 7))}"></label>
+        <label class="f">Status<select name="status">${Object.entries(PLAN_STATUS).map(([k, [, l]]) => opt(k, l, j?.status || 'planned')).join('')}</select></label></div>
+      <div class="pjf-sec">String</div>
+      <div class="pjf-string"><div class="f">Tubing size${seg('size', sizes, j?.tubing_size || sizes[2])}</div>
+        <div class="f">Setting tool${seg('tool', cfg.tools || ['EMST', 'TTS'], j?.setting_tool || 'EMST')}</div></div>
+      <div class="pjf-sec">BHA make-up</div>
+      <div class="pjf-tw"><table class="t pjf-bha"><thead><tr><th>Component</th><th>Spec</th><th class="num">Qty</th><th class="num">Shelf</th></tr></thead><tbody>
+        ${rows.map(([k, name, spec, q]) => `<tr data-row="${k}"><td class="name">${esc(name)}</td><td>${spec === 'Std' ? '<span class="sub">Std</span>' : spec}</td><td class="num">${q}</td><td class="num shelf"></td></tr>`).join('')}
+        <tr class="svc"><td class="name sub">Setting tools</td><td colspan="3" class="svcline"></td></tr>
+      </tbody></table></div>
+    </div>
+    <aside class="pjf-side"><div class="pjf-sec">Stock check</div><div id="pl-live" class="pllive"></div><div class="sub" id="pl-pos"></div>
+      <div class="pjf-sec" style="margin-top:16px">Notes</div><textarea name="notes" rows="4" placeholder="Anything the store should know">${esc(j?.notes || '')}</textarea></aside></div>`,
     onOpen: d => {
       const f = $('form', d);
       const draw = () => {
         const x = Object.fromEntries(new FormData(f).entries()); const cand = planRow(x, j);
         const E = planEngine(P, { ...cand, id: j?.id ?? undefined, mr: j?.mr });
-        const r = E.results.get(j?.id ?? 'new');
-        const box = $('#pl-live', d);
-        if (cand.status !== 'planned' || !r) { box.className = 'pllive'; box.innerHTML = `<b>Not checked</b><div class="sub">Only planned jobs are checked against the shelf.</div>`; return; }
-        const earlier = E.active.filter(a => a !== r.job && (a.planned_on < r.job.planned_on || (a.planned_on === r.job.planned_on && (a.id || 1e15) < (r.job.id || 1e15)))).length;
+        const r = E.results.get(j?.id ?? 'new'); const planned = cand.status === 'planned' && r;
+        const lineFor = p => p && r ? r.lines.find(l => l.part.id === p.id) : null;
+        $$('tr[data-row]', d).forEach(tr => {
+          const k = tr.dataset.row; const cell = $('.shelf', tr);
+          const p = k === 'blank' ? part('Blank Pipe', x.blen) : k === 'screen' ? part('Deltapore Screen', x.mic) : P.parts.find(pp => pp.job_key === k);
+          const ln = lineFor(p);
+          if (!planned) { cell.innerHTML = '<span class="sub">—</span>'; return; }
+          if (!ln || !ln.need) { cell.innerHTML = '<span class="sub">—</span>'; return; }
+          cell.innerHTML = ln.missing ? `<span class="neg"><b>✖ ${ln.reason === 'Not carried' ? 'not carried' : ln.reason === 'No Nest item linked' ? 'not linked' : `short ${fq(ln.missing)}`}</b><span class="sub"> · ${fq(ln.before || 0)} free</span></span>` : `<span class="pos"><b>✔</b> ${fq(ln.before)} free</span>`;
+        });
+        const svc = r ? r.lines.filter(l => l.part.kind === 'service') : [];
+        $('.svcline', d).innerHTML = !planned ? '<span class="sub">Checked only for planned jobs</span>' : svc.length ? svc.map(l => `<span class="${l.missing ? 'neg' : 'pos'}">${l.missing ? '✖' : '✔'} ${esc(partName(l.part))}${l.reused ? ' <span class="sub">(reused)</span>' : ''}</span>`).join(' · ') : '<span class="sub">None needed</span>';
+        const box = $('#pl-live', d), pos = $('#pl-pos', d);
+        if (!planned) { box.className = 'pllive'; box.innerHTML = `<b>Not checked</b><div class="sub">${cand.status === 'hold' ? 'On hold' : cand.status === 'run' ? 'Run' : 'Cancelled'} jobs don’t claim stock.</div>`; pos.textContent = ''; return; }
         box.className = 'pllive ' + (r.ok ? 'ok' : 'bad');
-        box.innerHTML = r.ok ? `<b>✔ Can be done from the shelf</b><div class="sub">After ${plural(earlier, 'earlier job')} take${earlier === 1 ? 's' : ''} ${earlier === 1 ? 'its' : 'their'} parts.</div>`
-          : `<b>✖ Short for this job</b><ul>${r.short.map(s => `<li>${fq(s.missing)} × ${esc(partName(s.part))} (${esc(s.size)})${s.reason !== 'Not enough on the shelf' ? ' · ' + esc(s.reason) : ''}</li>`).join('')}</ul><div class="sub">${earlier ? `${plural(earlier, 'earlier job')} ${earlier === 1 ? 'is' : 'are'} served first.` : 'This is the first job in date order.'}</div>`;
+        box.innerHTML = r.ok ? '<b class="big">✔ Ready</b><div>Can be done from the shelf.</div>'
+          : `<b class="big">✖ Short ${plural(r.short.length, 'part')}</b><ul>${r.short.map(sh => `<li>${fq(sh.missing)} × ${esc(partName(sh.part))}${sh.size !== cand.tubing_size ? ` (${esc(sh.size)})` : ''}${sh.reason !== 'Not enough on the shelf' ? ` <span class="sub">· ${sh.reason === 'Not carried' ? 'not carried' : 'no Nest item linked'}</span>` : ''}</li>`).join('')}</ul>`;
+        const idx = E.active.indexOf(r.job) + 1;
+        pos.textContent = `${ord(idx)} of ${E.active.length} job${E.active.length === 1 ? '' : 's'} in date order. Earlier jobs take stock first.`;
       };
-      f.addEventListener('input', debounce(draw, 120)); f.addEventListener('change', draw); draw();
+      f.addEventListener('input', debounce(draw, 100)); f.addEventListener('change', draw); draw();
     },
     onSubmit: async x => {
-      const row = planRow(x, j); delete row.id; delete row.mr;
+      const row = planRow(x, j);
       if (!row.title) throw new Error('Enter the well name.');
       if (j) await q(sb.from('plan_jobs').update(row).eq('id', j.id));
       else await q(sb.from('plan_jobs').insert({ ...row, department_id: planCfg().department_id }));

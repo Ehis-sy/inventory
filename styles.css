@@ -91,7 +91,7 @@ main { min-width: 0; padding: 26px 32px 60px; max-width: 1280px; }
 
 label.f { display: block; font-weight: 600; font-size: 14px; margin-bottom: 12px; }
 label.f > span.hint { display: block; font-weight: 400; color: var(--muted); font-size: 13px; }
-input[type=text], input[type=email], input[type=password], input[type=number], input[type=date], input[type=search], select, textarea {
+input[type=text], input[type=email], input[type=password], input[type=number], input[type=date], input[type=month], input[type=search], select, textarea {
   display: block; width: 100%; margin-top: 4px; padding: 9px 11px; border: 1px solid var(--line); border-radius: var(--radius-s); background: #fff; min-height: 40px;
 }
 textarea { min-height: 70px; resize: vertical; }
@@ -638,3 +638,53 @@ table.t tr.sogrp td { background: rgba(127, 127, 127, .08); font-size: 14px; }
 .board .kpi.bad .n { color: var(--bad); }
 .board .kpi.ok .n { color: var(--ok); }
 table.t tfoot tr.totalrow td { border-top: 2px solid var(--ink); background: #f3f4f5; }
+
+/* ---------- v2.4: job form (professional layout) ---------- */
+.pjf { display: grid; grid-template-columns: minmax(0, 1fr) 280px; gap: 0; margin: -12px -20px; }
+.pjf-main { padding: 14px 20px 16px; border-right: 1px solid var(--line); }
+.pjf-side { padding: 14px 18px 16px; background: #FAFAFB; }
+.pjf-side textarea { width: 100%; border: 1px solid var(--line); border-radius: var(--radius-s); padding: 8px 10px; font: inherit; resize: vertical; }
+.pjf-sec { font-size: 11.5px; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; color: var(--muted); margin: 14px 0 8px; padding-bottom: 6px; border-bottom: 1px solid var(--line); }
+.pjf-main > .pjf-sec:first-child, .pjf-side > .pjf-sec:first-child { margin-top: 0; }
+.pjf-string { display: grid; grid-template-columns: auto auto; gap: 0 18px; justify-content: start; }
+.segi { display: inline-flex; border: 1px solid var(--line); border-radius: var(--radius-s); overflow: hidden; background: #fff; margin-top: 4px; }
+.segi label { margin: 0; }
+.segi input { position: absolute; opacity: 0; pointer-events: none; }
+.segi span { display: block; padding: 8px 14px; font-weight: 600; color: var(--muted); cursor: pointer; border-right: 1px solid var(--line); white-space: nowrap; }
+.segi label:last-child span { border-right: 0; }
+.segi input:checked + span { background: var(--gunmetal); color: #fff; }
+.segi input:focus-visible + span { outline: 2px solid var(--orange, #E8552C); outline-offset: -2px; }
+.pjf-bha { margin: 0; }
+.pjf-bha td { padding-top: 6px; padding-bottom: 6px; vertical-align: middle; }
+.pjf-bha select.inline { padding: 5px 8px; min-height: 32px; margin: 0 4px 0 0; width: auto; display: inline-block; }
+.pjf-bha .qin { width: 64px; text-align: center; padding: 5px 6px; min-height: 32px; margin: 0; }
+.pjf-bha td.shelf { white-space: nowrap; min-width: 120px; }
+.pjf-bha tr.svc td { background: #FAFAFB; font-size: 13px; line-height: 1.7; }
+.pllive { border: 1px solid var(--line); border-radius: 10px; padding: 12px 14px; margin: 0 0 8px; background: #fff; }
+.pllive .big { font-size: 17px; display: block; margin-bottom: 2px; }
+.btngrp { display: inline-flex; }
+.btngrp .btn { border-radius: 0; margin-left: -1px; }
+.btngrp .btn:first-child { border-radius: var(--radius-s) 0 0 var(--radius-s); margin-left: 0; }
+.btngrp .btn:last-child { border-radius: 0 var(--radius-s) var(--radius-s) 0; }
+.btngrp .btn[data-del]:hover { color: var(--bad); }
+.pljobs td.plchk { min-width: 260px; }
+.pljobs td.plchk .chip { margin-bottom: 3px; }
+.pljobs tr.is-short td:first-child { box-shadow: inset 3px 0 0 var(--bad); }
+@media (max-width: 860px) {
+  .pjf { grid-template-columns: 1fr; }
+  .pjf-main { border-right: 0; border-bottom: 1px solid var(--line); }
+  .pjf-string { grid-template-columns: 1fr; }
+  .segi { max-width: 100%; overflow-x: auto; }
+}
+.pjf-string .f { display: flex; flex-direction: column; align-items: flex-start; font-weight: 600; font-size: 14px; margin-bottom: 4px; }
+.pjf-bha td.name { white-space: nowrap; font-weight: 600; }
+.pjf-bha td:nth-child(2) { width: 100%; }
+.pjf-bha select.inline { width: 118px; }
+.pjf-bha td.num { width: 1%; }
+.pjf-bha th:nth-child(3), .pjf-bha td:nth-child(3) { padding-left: 14px; }
+.pjf-tw { overflow-x: auto; }
+@media (max-width: 860px) {
+  .pjf { grid-template-columns: minmax(0, 1fr); }
+  .pjf-main, .pjf-side { min-width: 0; }
+  .pjf-bha select.inline { width: 100px; }
+}
