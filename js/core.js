@@ -275,6 +275,7 @@ async function refreshAlerts() {
     if (cm.length) R.push({ kind: 'cert', title: `${plural(cm.length, 'certificate')} due within ${setting('cert_warn_days', 30)} days`, link: '#/certs' });
     const om = overdue.filter(c => mine.includes(c.items?.department_id));
     if (om.length) R.push({ kind: 'late', title: `${plural(om.length, 'item')} overdue back from jobs`, link: '#/checkouts?v=overdue' });
+    if (isSuper() && !S.viewAs && typeof backupDue === 'function' && backupDue()) R.push({ kind: 'backup', title: 'Monthly backup due', body: 'Settings → Backups → Download backup, then save it to Nest Backups in Google Drive.', link: '#/settings' });
     S.alerts = { unread: unread || 0, reminders: R };
     const n = (unread || 0) + R.length;
     $$('.bell-count').forEach(b => { b.textContent = n > 99 ? '99+' : n; b.hidden = !n; });
@@ -285,7 +286,7 @@ async function openBell() {
   const notes = await q(sb.from('notifications').select('*').order('created_at', { ascending: false }).limit(40)).catch(() => []);
   const R = S.alerts.reminders;
   if (S.viewAs) notes.length = 0;
-  const icon = k => ({ issued: 'truck', approval: 'check', count: 'count', late: 'clock', kit: 'kit', cert: 'cert', low: 'box', faulty: 'box', missing: 'truck', decision: 'check', signup: 'users', signoff: 'sign' }[k] || 'bell');
+  const icon = k => ({ issued: 'truck', approval: 'check', count: 'count', late: 'clock', kit: 'kit', cert: 'cert', low: 'box', faulty: 'box', missing: 'truck', decision: 'check', signup: 'users', signoff: 'sign', backup: 'down' }[k] || 'bell');
   const li = (n, unread) => `<li class="${unread ? 'unread' : ''}"><a href="${esc(n.link || '#/dashboard')}" data-close><span class="ni ni-${esc(n.kind || 'x')}">${ico(icon(n.kind))}</span>
     <span><b>${esc(n.title)}</b>${n.body ? `<span class="sub">${esc(n.body)}</span>` : ''}${n.created_at ? `<span class="sub">${fdt(n.created_at)}</span>` : ''}</span></a></li>`;
   const d = document.createElement('div'); d.className = 'bellpanel'; d.setAttribute('role', 'dialog'); d.setAttribute('aria-label', 'Notifications');

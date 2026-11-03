@@ -1,13 +1,34 @@
-# GANKCO Nest: version 2.4 update
+# GANKCO Nest: version 2.5 update
 
 *Built to support engineered solutions.*
 
 ## Where things live
 
+
 - **Website:** nest.gankcoenergy.com, hosted on GitHub Pages from **github.com/gankco-energy/gankco-nest** (organization owned by the Nest Gmail; Ehis is also an Owner).
 - **Database and sign-in:** Supabase project in the **GANKCO Energy Services** organization (Nest Gmail; Ehis also an Owner).
 - **Emails:** sent by Brevo from **nest-alerts@gankcoenergy.com** as "GANKCO Nest", using Supabase's custom SMTP. The branded templates are in Supabase → Authentication → Emails → Templates.
 - **DNS (company IT):** `nest` CNAME → `gankco-energy.github.io`, plus the Brevo verification records.
+
+## Install 2.5 (about 3 minutes)
+
+1. **Supabase → SQL Editor → New query:** paste all of **`6-nest-v2.5-upgrade.sql`** and press **Run**. Wait for **Success**. It's safe to run again.
+2. **GitHub:** unzip **`gankco-nest-v2.5.zip`** and upload everything from the folder into **github.com/gankco-energy/gankco-nest** (**Add file → Upload files**), then commit. Keep the `CNAME` file.
+3. After 1–2 minutes, anyone with Nest open sees **"A new version is available: Reload"**.
+4. **Take the first backup:** Settings → Backups → **Download backup**. Save it in a **Nest Backups** folder in the Nest Gmail's Google Drive.
+
+## What's new in 2.5
+
+- **Backups (Super Admin, Settings → Backups):**
+  - **Download backup** saves everything in Nest to one dated file (`gankco-nest-backup-YYYY-MM-DD.json`): items, stock, movements, materials requests, counts, sign-offs, signatures, prices, the job planner, users and the audit log. Tables added in future versions are included automatically.
+  - The page shows the last backup (when and who) and when the next one is due.
+  - **Monthly reminder:** from the 1st of each month, the Super Admin's bell shows **Monthly backup due** until a backup is downloaded that month.
+  - **Make restore script from a backup file** turns a backup into SQL file(s) to run in Supabase's SQL Editor, in order. Restoring replaces all Nest data with the backup; sign-in accounts aren't touched. The handover guide has the full steps.
+- **Settings → Email alerts** now says that sign-up, invitation and password emails come from nest-alerts@gankcoenergy.com.
+
+---
+
+# Earlier: version 2.4 update
 
 ## Install 2.4 (about 5 minutes)
 

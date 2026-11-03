@@ -694,3 +694,9 @@ table.t tfoot tr.totalrow td { border-top: 2px solid var(--ink); background: #f3
 .auth-col > form, .auth-col > .card { width: 100%; }
 .auth-form .credit { margin: 18px 0 0; text-align: center; font-size: 12px; color: #8E9196; letter-spacing: .02em; }
 .l-foot .credit { color: #6E7277; font-size: 12px; }
+
+/* 2.5 backups */
+.ni-backup { background: var(--warn-bg); color: var(--warn); }
+#backups { margin-top: 18px; }
+#backups h3 { font-size: 15px; margin: 22px 0 6px; }
+.rsteps { margin: 0 0 6px; padding-left: 20px; line-height: 1.7; }

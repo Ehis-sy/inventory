@@ -415,11 +415,13 @@ ROUTES.settings = {
       <section class="panel"><header><h2>QMS form details on reports</h2></header><div class="body">
         <label class="f">Ref No.<input type="text" name="form_ref" value="${s('form_ref')}"></label>
         <div class="row2"><label class="f">Issue date<input type="text" name="form_issue" value="${s('form_issue')}"></label><label class="f">Revision<input type="text" name="form_revision" value="${s('form_revision')}"></label></div></div></section>
-      <section class="panel"><header><h2>Email alerts</h2></header><div class="body"><p class="muted">Email alerts switch on once the noreply@gankcoenergy.com mailbox is ready. Until then, everything shows in the bell inside Nest.</p></div></section>
-      <div><button class="btn primary" type="submit">Save settings</button></div></form>`;
+      <section class="panel"><header><h2>Email alerts</h2></header><div class="body"><p class="muted">Sign-up, invitation and password emails are sent from nest-alerts@gankcoenergy.com. Daily alert emails are planned; until then, alerts show in the bell inside Nest.</p></div></section>
+      <div><button class="btn primary" type="submit">Save settings</button></div></form>
+      ${backupPanel()}`;
   },
   bind(main) {
     const f = $('#sf', main); if (!f) return;
+    bindBackup(main);
     f.onsubmit = async e => {
       e.preventDefault(); const d = Object.fromEntries(new FormData(f));
       if (+d.count_open_day > +d.count_close_day) return toast('The count must open before the deadline.', true);
@@ -428,6 +430,85 @@ ROUTES.settings = {
     };
   }
 };
+
+// ================================================================ BACKUPS (2.5)
+const lastBackup = () => { const v = setting('last_backup', null); return v && v.at ? v : null; };
+const backupDue = () => { const b = lastBackup(); if (!b) return true; const ym = d => d.getFullYear() * 12 + d.getMonth(); return ym(new Date(b.at)) < ym(new Date()); };
+function backupPanel() {
+  const b = lastBackup(), due = backupDue();
+  const next = new Date(); next.setMonth(next.getMonth() + (due ? 0 : 1), 1);
+  return `<section class="panel" id="backups"><header><h2>Backups</h2>${due ? chip('overdue', 'Due this month') : chip('ok', 'Up to date')}</header><div class="body">
+    <p class="muted">A backup is one file with everything in Nest: items, stock, movements, materials requests, counts, sign-offs, signatures, prices, the job planner, users and the audit log. Download one at the start of every month and save it in the <b>Nest Backups</b> folder in the Nest Gmail’s Google Drive.</p>
+    <dl class="kv"><dt>Last backup</dt><dd>${b ? `${fdt(b.at)}${b.by_name ? ' · ' + esc(b.by_name) : ''}` : '<span class="sub">None yet</span>'}</dd>
+      <dt>Next due</dt><dd>${due ? 'Now' : `1 ${next.toLocaleDateString('en-GB', { month: 'long', year: 'numeric' })}`}</dd></dl>
+    <div class="actionrow mt"><button class="btn primary" type="button" id="bk-dl">${ico('down')}Download backup</button></div>
+    <h3 class="mt">Restore from a backup</h3>
+    <p class="muted">Only needed if data is lost or badly damaged. Nest turns a backup file into a restore script that you run in Supabase. <b>Restoring replaces all Nest data with what was in the backup</b>: anything entered after that backup is lost. Sign-in accounts aren’t affected. Follow the handover guide, step by step.</p>
+    <div class="actionrow"><button class="btn" type="button" id="bk-rs">${ico('up')}Make restore script from a backup file</button></div></div></section>`;
+}
+function bindBackup(main) {
+  const dl = $('#bk-dl', main), rs = $('#bk-rs', main);
+  if (dl) dl.onclick = async () => {
+    const t = dl.innerHTML; dl.disabled = true; dl.textContent = 'Preparing backup…';
+    try {
+      const data = await q(sb.rpc('export_backup'));
+      const rows = Object.values(data.row_counts || {}).reduce((a, b) => a + b, 0);
+      saveBlob(new Blob([JSON.stringify(data)], { type: 'application/json' }), `gankco-nest-backup-${localISO(0)}.json`);
+      await loadLookups(); refreshAlerts();
+      toast(`Backup downloaded: ${plural(Object.keys(data.tables || {}).length, 'table')}, ${rows.toLocaleString()} records. Save it to Nest Backups in Google Drive.`);
+      render({ quiet: true });
+    } catch (e) { toast(niceError(e), true); dl.disabled = false; dl.innerHTML = t; }
+  };
+  if (rs) rs.onclick = () => modal({
+    title: 'Make restore script', submit: 'Make script',
+    sub: 'Choose a Nest backup file (gankco-nest-backup-….json). Nothing changes in Nest yet: this only makes the script.',
+    body: '<label class="f">Backup file<input type="file" accept=".json,application/json" required></label>',
+    onSubmit: async (x, d) => {
+      const file = $('input[type=file]', d).files[0]; if (!file) throw new Error('Choose the backup file.');
+      let data; try { data = JSON.parse(await file.text()); } catch { throw new Error('That file isn’t a Nest backup.'); }
+      if (data.format !== 'gankco-nest-backup' || !data.tables) throw new Error('That file isn’t a Nest backup.');
+      const parts = restoreParts(data);
+      setTimeout(() => restoreDownloads(data, parts), 50);
+    } });
+}
+function restoreParts(data, limit = 900000) {
+  const all = JSON.stringify(data.tables);
+  let tag = 'nest'; while (all.includes('$' + tag + '$')) tag = 'nest' + Math.random().toString(36).slice(2, 8);
+  const lit = j => `$${tag}$${j}$${tag}$`;
+  const stmts = [];
+  Object.keys(data.tables).sort().forEach(tb => {
+    const rows = data.tables[tb] || []; const name = tb.replace(/'/g, "''");
+    if (!rows.length) { stmts.push(`select public._restore_table('${name}', '[]'::jsonb, false);`); return; }
+    let chunk = [], size = 2, first = true;
+    const flush = () => { stmts.push(`select public._restore_table('${name}', ${lit('[' + chunk.join(',') + ']')}::jsonb, ${first ? 'false' : 'true'});`); chunk = []; size = 2; first = false; };
+    rows.forEach(r => { const j = JSON.stringify(r); if (chunk.length && size + j.length > limit) flush(); chunk.push(j); size += j.length + 1; });
+    if (chunk.length) flush();
+  });
+  const parts = []; let cur = [], size = 0;
+  stmts.forEach(st => { if (cur.length && size + st.length > limit) { parts.push(cur); cur = []; size = 0; } cur.push(st); size += st.length; });
+  if (cur.length) parts.push(cur);
+  return parts;
+}
+function restoreDownloads(data, parts) {
+  const day = String(data.created_at || '').slice(0, 10), n = parts.length;
+  const file = i => `nest-restore-${day}-part${i + 1}of${n}.sql`;
+  const sql = (p, i) => [
+    `-- GANKCO Nest restore script: part ${i + 1} of ${n}`,
+    `-- Made from the backup taken ${fdt(data.created_at)}${data.created_by ? ' by ' + data.created_by : ''} (Nest ${data.schema_version || ''}).`,
+    '-- THIS REPLACES NEST DATA WITH THE BACKUP. Run every part, in order, in Supabase → SQL Editor.',
+    'begin;', 'set local session_replication_role = replica;', ...p, 'commit;', ''].join('\n');
+  modal({
+    title: 'Restore script ready', submit: '', cancel: 'Close', wide: true,
+    sub: `Backup from <b>${esc(fdt(data.created_at))}</b>${data.created_by ? ' by ' + esc(data.created_by) : ''}. ${n === 1 ? 'One file.' : `${n} files: run them in order.`}`,
+    body: `<ol class="rsteps">
+      <li>Download a fresh backup first (so today’s data is saved too).</li>
+      <li>Ask everyone to stop using Nest.</li>
+      <li>In Supabase → <b>SQL Editor</b> → <b>New query</b>, paste the whole of part 1 and press <b>Run</b>. Wait for <b>Success</b>.${n > 1 ? ' Then do the same for each part, in order.' : ''}</li>
+      <li>Open Nest and press <b>Ctrl + Shift + R</b>. Check the Inventory and a few records.</li></ol>
+      <div class="actionrow mt">${parts.map((p, i) => `<button type="button" class="btn${i ? '' : ' primary'}" data-part="${i}">${ico('down')}Part ${i + 1} of ${n}</button>`).join('')}</div>`,
+    onOpen: d => $$('[data-part]', d).forEach(b => b.onclick = () => { const i = +b.dataset.part; saveBlob(new Blob([sql(parts[i], i)], { type: 'application/sql' }), file(i)); b.classList.remove('primary'); b.innerHTML = `${ico('check')}Part ${i + 1} downloaded`; const nx = $(`[data-part="${i + 1}"]`, d); if (nx) nx.classList.add('primary'); })
+  });
+}
 
 // ================================================================ LABELS
 ROUTES.labels = {
