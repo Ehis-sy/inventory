@@ -2,11 +2,12 @@
 'use strict';
 
 // ================================================================ MAINTENANCE: state
-const MAINT_APPS = { all: 'All of Nest', inventory: 'Inventory', po: 'Purchase Order', proforma: 'Proforma Invoice & Quote' };
+const MAINT_APPS = { all: 'All of Nest', inventory: 'Inventory', po: 'Purchase Order', people: 'PeopleCore', proforma: 'Proforma Invoice & Quote' };
 const MAINT_DESC = {
   all: 'Everyone sees the maintenance screen. Use this for Nest updates.',
   inventory: 'Only the Inventory app is locked. Other apps keep working.',
   po: 'Only the Purchase Order app is locked.',
+  people: 'Only PeopleCore (HR) is locked.',
   proforma: 'Only the Proforma Invoice & Quote app is locked.' };
 const I_WRENCH = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z"/></svg>';
 const I_CLOCK = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg>';
@@ -31,7 +32,7 @@ const mWhen = d => { const x = new Date(d), n = new Date(); const same = x.toDat
   return same ? `today at ${mTime(d)}` : tmr ? `tomorrow at ${mTime(d)}` : `${x.toLocaleDateString('en-GB', { weekday: 'short', day: 'numeric', month: 'short' })} at ${mTime(d)}`; };
 const mBack = w => !w.back_by ? null : new Date(w.back_by) < new Date() ? 'late' : (new Date(w.back_by).toDateString() === new Date().toDateString() ? mTime(w.back_by) : `${new Date(w.back_by).toLocaleDateString('en-GB', { weekday: 'short', day: 'numeric', month: 'short' })}, ${mTime(w.back_by)}`);
 const mLen = w => { if (!w.back_by) return ''; const m = Math.round((new Date(w.back_by) - new Date(w.starts_at)) / 6e4); return m >= 90 ? `about ${Math.round(m / 60)} hours` : `about ${m} minutes`; };
-const maintSig = () => JSON.stringify([maintLocked('all')?.id, maintLocked('inventory')?.id, maintWin('inventory')?.id, maintWin('all')?.id, maintLocked('po')?.id, maintWin('po')?.id,
+const maintSig = () => JSON.stringify([maintLocked('all')?.id, maintLocked('inventory')?.id, maintWin('inventory')?.id, maintWin('all')?.id, maintLocked('po')?.id, maintWin('po')?.id, maintLocked('people')?.id, maintWin('people')?.id,
   mNoticeWins('launcher').map(w => w.id), S.maint.wins.map(w => w.id + ':' + w.back_by), maintExempt()]);
 
 // ================================================================ MAINTENANCE: what people see
@@ -39,7 +40,7 @@ const maintSig = () => JSON.stringify([maintLocked('all')?.id, maintLocked('inve
 function maintGate(r) {
   const all = maintLocked('all');
   if (all) { renderMaintScreen(all, 'all'); return true; }
-  const app = r === 'po' ? 'po' : 'inventory';
+  const app = r === 'po' ? 'po' : r === 'people' ? 'people' : 'inventory';
   if (r && r !== 'home') { const w = maintLocked(app); if (w) { renderMaintScreen(w, app); return true; } }
   S.maint.screen = null;
   return false;

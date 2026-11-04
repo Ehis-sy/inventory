@@ -119,7 +119,7 @@ async function brandXlsx({ file, sheets, instructions, lists, hidden }) {
       }
       cols.forEach((c, i) => {
         const cell = ws.getCell(r, i + 1); let v = row[c.key];
-        if (c.type === 'date' && v) { v = new Date(String(v).length === 10 ? v + 'T00:00:00' : v); cell.numFmt = 'dd mmm yyyy'; }
+        if (c.type === 'date' && v) { v = new Date(String(v).length === 10 ? v + 'T00:00:00Z' : v); /* 3.0: UTC, so Excel shows the same day */ cell.numFmt = 'dd mmm yyyy'; }
         if (c.type === 'num' && v !== '' && v != null && !isNaN(+v)) { v = +v; cell.numFmt = '#,##0.##'; }
         cell.value = v ?? '';
         cell.font = { name: 'Calibri', size: 10, color: { argb: 'FF' + BRAND.ink }, bold: !!c.bold };
@@ -199,13 +199,14 @@ async function readXlsx(fileObj) {
       const o = {}; let any = false;
       headers.forEach((h, c) => {
         if (!h) return; let v = row.getCell(c).value;
-        if (v && typeof v === 'object') { if (v instanceof Date) v = v.toISOString().slice(0, 10); else if (v.result !== undefined) v = v.result; else if (v.richText) v = v.richText.map(t => t.text).join(''); else if (v.text) v = v.text; }
+        if (v && typeof v === 'object') { if (v instanceof Date) v = new Date(v.getTime() + 12 * 3600e3).toISOString().slice(0, 10); /* 3.0: nearest day */ else if (v.result !== undefined) v = v.result; else if (v.richText) v = v.richText.map(t => t.text).join(''); else if (v.text) v = v.text; }
         if (v !== null && v !== undefined && String(v).trim() !== '') any = true;
         o[h] = v;
       });
       const aid = o['App ID']; const aidTxt = aid == null ? '' : String(aid).trim();
       if (any && aidTxt !== 'Total' && (aidTxt === '' || !isNaN(+aidTxt))) out.push(o);   // group headings and the footer line aren't rows
     });
+    out.headers = headers.filter(Boolean); out.sheet = ws.name;
     const og = wb.getWorksheet('Original');
     if (og) { const keys = og.getRow(1).values; out.orig = new Map(); og.eachRow((r, i) => { if (i === 1) return; const o = {}; keys.forEach((k, c) => { if (k && k !== 'ID') { const v = r.getCell(c).value; o[k] = v == null ? '' : String(v); } }); out.orig.set(+r.getCell(1).value, o); }); }
     return out;
@@ -524,20 +525,29 @@ async function downloadTemplate(kind) {
   await brandXlsx({ file: `${info.file}_${localISO(0)}.xlsx`, sheets: [sheet], instructions });
 }
 
+// which Nest template a file is, from its sheet and columns (no need to pick it from a list)
+function templateKind(rows) {
+  const h = rows.headers || [];
+  if (h.includes('Sub service line') || h.includes('Sub-type')) return 'items';
+  if (h.includes('New qty')) return 'quantities';
+  if (h.includes('Kit no.')) return 'kits';
+  if (h.includes('In store (available)')) return 'locations';
+  return null;
+}
 async function uploadTemplate() {
   return modal({
-    title: 'Upload a filled template', sub: 'Pick a Nest template you downloaded and filled in. You’ll see what will change before anything is saved.', submit: 'Check file',
-    body: `<label class="f">Template<select name="kind">${Object.entries(TEMPLATE_INFO).map(([k, v]) => opt(k, v.title)).join('')}</select></label>
-      <label class="f">File<input type="file" name="file" accept=".xlsx" required></label>`,
+    title: 'Upload a filled template', sub: 'Pick a Nest template you downloaded and filled in. Nest recognises which template it is, and shows what will change before anything is saved.', submit: 'Check file',
+    body: `<label class="f">File<input type="file" name="file" accept=".xlsx" required></label>`,
     onSubmit: async (d, dlg) => {
       const f = $('input[type=file]', dlg).files[0]; if (!f) throw new Error('Choose the Excel file.');
-      const rows = await readXlsx(f);
-      setTimeout(() => previewUpload(d.kind, rows), 50);
+      const rows = await readXlsx(f); const kind = templateKind(rows);
+      if (!kind) throw new Error('Nest can’t tell which template this is. Download a fresh template from Excel templates, fill it in, and upload that.');
+      setTimeout(() => previewUpload(kind, rows), 50);
     }
   });
 }
 
-async function previewUpload(kind, rows) {
+async function previewUpload(kind, rows, opts = {}) {
   const its = await items(); await stockRows(true);
   const byId = new Map(its.map(i => [i.id, i])); const byCode = new Map();
   its.forEach(i => { const k = (i.code || '').toLowerCase(); if (!byCode.has(k)) byCode.set(k, []); byCode.get(k).push(i); });
@@ -565,7 +575,13 @@ async function previewUpload(kind, rows) {
       async () => { await q(sb.rpc('bulk_move', { p_moves: ok.map(o => ({ item_id: o.item.id, from: o.from, to: o.to, qty: o.qty })), p_notes: 'Excel upload' })); return `Moved ${plural(ok.length, 'item')}`; });
   }
   if (kind === 'quantities') {
+    const useCur = opts.useCurrent; const typedInCurrent = [];
     rows.forEach((r, ix) => {
+      if ((r['New qty'] === '' || r['New qty'] == null) && r['Current qty'] !== '' && r['Current qty'] != null) {
+        const it0 = find(r); const loc0 = locByName(r['Location']);
+        const st0 = Object.keys(STATUS).find(k => STATUS[k].toLowerCase() === String(r['Status'] || 'Available').toLowerCase()) || 'available';
+        if (it0 && loc0 && !isNaN(+r['Current qty']) && +r['Current qty'] !== stockOf(it0.id, loc0.id, st0)) { if (useCur) r = { ...r, 'New qty': r['Current qty'] }; else typedInCurrent.push(r); }
+      }
       if (r['New qty'] === '' || r['New qty'] == null) return;
       const it = find(r); if (!it) return errs.push(`Row ${ix + 1}: item not found (${r['Item Code'] || r['App ID']})`);
       if (!canAct(it.department_id)) return errs.push(`${it.code || it.name}: not in your service line`);
@@ -575,8 +591,10 @@ async function previewUpload(kind, rows) {
       const cur = stockOf(it.id, loc.id, st); if (cur === n) return;
       ok.push({ item: it, loc: loc.id, status: st, cur, n, reason: r['Reason'] || '' });
     });
+    const warn = typedInCurrent.length ? { html: `<div class="notice warn"><b>You changed Current qty on ${plural(typedInCurrent.length, 'row')}</b>, but New qty is blank there. Nest only reads <b>New qty</b>.
+      <div class="mt"><button type="button" class="btn small tagbtn" data-usecur>Use the numbers I typed in Current qty</button></div></div>`, use: () => previewUpload(kind, rows, { useCurrent: true }) } : null;
     return confirmUpload(kind, ok, errs, ['Item', 'Location', 'Was', 'Now', 'Reason'], o => [`${o.item.code || ''} ${o.item.name}`, `${locName(o.loc)} (${STATUS[o.status].toLowerCase()})`, fq(o.cur), fq(o.n), o.reason],
-      async (reason) => { const res = await q(sb.rpc('submit_changes', { p_changes: ok.map(o => ({ item_id: o.item.id, location_id: o.loc, status: o.status, qty_after: o.n, reason: o.reason })), p_reason: reason })); return describeSubmit(res); }, true);
+      async (reason) => { const res = await q(sb.rpc('submit_changes', { p_changes: ok.map(o => ({ item_id: o.item.id, location_id: o.loc, status: o.status, qty_after: o.n, reason: o.reason })), p_reason: reason })); return describeSubmit(res); }, true, warn);
   }
   if (kind === 'kits') {
     rows.forEach((r, ix) => {
@@ -594,15 +612,16 @@ function describeSubmit(res) {
   const applied = res.filter(r => r.state === 'approved').length, pend = res.filter(r => r.state === 'pending').length;
   return [applied ? `Applied ${plural(applied, 'request')}` : '', pend ? `Sent ${plural(pend, 'request')} for approval` : ''].filter(Boolean).join(' · ') || 'Done';
 }
-function confirmUpload(kind, ok, errs, head, cells, apply, needsReason) {
+function confirmUpload(kind, ok, errs, head, cells, apply, needsReason, warn) {
   return modal({
+    onOpen: (d, close) => { const b = warn && $('[data-usecur]', d); if (b) b.onclick = () => { close(null); setTimeout(warn.use, 50); }; },
     title: `Check: ${TEMPLATE_INFO[kind].title}`, wide: true, submit: ok.length ? (needsReason && !isAdmin() ? 'Send for approval' : 'Apply changes') : null,
     sub: `${plural(ok.length, 'change')} ready${errs.length ? `, ${plural(errs.length, 'row')} skipped` : ''}.`,
-    body: `${errs.length ? `<div class="notice bad"><b>Skipped rows</b><ul class="errlist">${errs.slice(0, 30).map(e => `<li>${esc(e)}</li>`).join('')}${errs.length > 30 ? `<li>…and ${errs.length - 30} more</li>` : ''}</ul></div>` : ''}
+    body: `${warn ? warn.html : ''}${errs.length ? `<div class="notice bad"><b>Skipped rows</b><ul class="errlist">${errs.slice(0, 30).map(e => `<li>${esc(e)}</li>`).join('')}${errs.length > 30 ? `<li>…and ${errs.length - 30} more</li>` : ''}</ul></div>` : ''}
       ${ok.length ? `<div class="tablewrap" style="max-height:46vh"><table class="t"><thead><tr>${head.map(h => `<th>${esc(h)}</th>`).join('')}</tr></thead>
         <tbody>${ok.slice(0, 400).map(o => `<tr>${cells(o).map(c => `<td>${esc(c)}</td>`).join('')}</tr>`).join('')}</tbody></table></div>
         ${needsReason ? `<label class="f mt">Reason for this upload<input type="text" name="reason" required placeholder="e.g. October stock-take, Warri store"></label>` : ''}`
-        : '<div class="empty">Nothing to change: the file matches what is on record.</div>'}`,
+        : `<div class="empty">Nothing to change: ${kind === 'quantities' ? 'no New qty is different from what Nest has. Type the correct number in the New qty column (orange).' : 'the file matches what is on record.'}</div>`}`,
     onSubmit: async d => {
       if (needsReason && !String(d.reason || '').trim()) throw new Error('Give a reason for this upload.');
       const msg = await apply(String(d.reason || '').trim()); toast(msg); refresh();

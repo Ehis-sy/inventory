@@ -1,4 +1,4 @@
-# GANKCO Nest: version 2.9 update
+# GANKCO Nest: version 3.0 update (PeopleCore)
 
 *Built to support engineered solutions.*
 
@@ -9,7 +9,41 @@
 - **Emails:** sent by Brevo from **nest-alerts@gankcoenergy.com** as "GANKCO Nest". Sign-in emails use Supabase's custom SMTP (templates in Supabase → Authentication → Emails → Templates). Alert emails use the Brevo API key saved in Supabase Vault as `brevo_api_key`, on a schedule (pg_cron).
 - **DNS (company IT):** `nest` CNAME → `gankco-energy.github.io`, plus the Brevo verification records.
 
-## Install 2.9 (about 10 minutes)
+## Install 3.0 (about 5 minutes)
+
+1. **Lock Nest:** **Nest admin → Nest settings → Maintenance → Schedule maintenance → All of Nest → Start now**.
+2. **Supabase → SQL Editor → New query:** paste all of **`16-nest-v3.0-upgrade.sql`** and press **Run**. It should end with **Nest 3.0 (PeopleCore) installed**. It's safe to run again. Nothing in Inventory or Purchase Orders changes.
+3. **GitHub:** unzip **`gankco-nest-v3.0.zip`** and upload everything into **github.com/gankco-energy/gankco-nest**, then commit. Keep the `CNAME` file.
+4. Reload Nest (**Ctrl + Shift + R**). The bottom of each page shows **v3.0**. End the maintenance.
+5. **PeopleCore → PeopleCore settings → HR team:** add the HR people (HR admin or HR officer).
+
+### What's new in 3.0: PeopleCore (Wave 1a)
+- **A new app on the Nest home page.** Every Nest user gets it (self-service). Switch it off for someone on the Team page like any other app.
+- **My profile:** each person's details, next of kin, documents, job history and their bank, tax and pension section. Staff send a **change request**; HR checks it, then the record updates. Changes to bank, tax or pension details go to **HR admins only**.
+- **Directory** of everyone, and **My team** for line managers (direct reports and the people further down, with confirmation dates).
+- **Approvals:** an inbox for requests waiting for you, your own requests, and (HR) all requests. Bell alerts, a line in the daily email, and a reminder when a step waits too long. **Stand-ins** approve for you while you're away.
+- **Org chart** from the structure, with vacant positions, external advisers and dotted lines. Fit, zoom and print (A3).
+- **Staff records (HR):** add and edit people, move them to a new position (kept in job history), photos, documents with expiry dates, and the **locked section** (bank, account, TIN, PFA, RSA PIN, NHF, NIN). Only HR admins and the person see it, and every look is logged.
+- **PeopleCore settings (HR admins):** units and positions (everything can be changed, including who reports to whom), grades, locations and employment types, **custom fields** with who-can-see-it (everyone, managers, HR, locked), **approval chains** (line manager, next level up, head of department, HR, a position or a named person, with conditions), **employee numbers** (GES + running number + year joined, e.g. GES0052022; HR can overwrite) and the **activity log**.
+- **Excel:** staff and organisation templates to download, fill and upload. These are starting formats until HR agrees the final columns.
+- **Staff without a company email** can create a Nest account with the email HR has on their PeopleCore record.
+- The structure starts from the organogram (positions only, no names). HR fills in the people.
+- **Fix:** dates in Excel templates no longer show a day early (this affected redress kit expiry dates).
+
+## Install 2.9.1 (already done, for reference)
+
+1. **GitHub:** unzip **`gankco-nest-v2.9.1.zip`** and upload everything into **github.com/gankco-energy/gankco-nest**, then commit. Keep the `CNAME` file. No SQL to run.
+2. Reload Nest (**Ctrl + Shift + R**). The bottom of each page shows **v2.9.1**.
+
+### What's new in 2.9.1
+- **Uploading a template:** Nest recognises which template the file is (items, quantity corrections, locations or redress kits), so there's nothing to choose and a file can't be read as the wrong kind.
+- **Quantity corrections:** if numbers were typed in **Current qty** instead of **New qty**, the preview says so and offers **Use the numbers I typed in Current qty**. When there's nothing to change, it says to use the New qty column.
+- **Location filter** works for any location name, including names with a comma (for example *Operations Base, Portharcourt*), and the **View stock** button on Locations uses it too.
+- **Renaming a location** updates the Inventory lists straight away, without a reload.
+
+
+
+## Install 2.9 (already done, for reference)
 
 1. **Lock Nest:** **Nest admin → Nest settings → Maintenance → Schedule maintenance → All of Nest → Start now**.
 2. **Supabase → SQL Editor → New query:** paste all of **`14-nest-v2.9-upgrade.sql`** and press **Run**. It should end with **Nest 2.9 installed**. It's safe to run again: items that already have a place are never moved again.

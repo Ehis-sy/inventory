@@ -222,7 +222,7 @@ ROUTES.locations = {
         if (!x.name.trim()) throw new Error('Enter a name.');
         const row = { name: x.name.trim(), kind: x.kind, notes: x.notes || null };
         if (l) await q(sb.from('locations').update({ ...row, active: !!x.active }).eq('id', l.id)); else await q(sb.from('locations').insert(row));
-        toast('Location saved'); await loadLookups(); render({ quiet: true });
+        toast('Location saved'); await loadLookups(); invalidate(); render({ quiet: true });
       }
     });
     $('#addloc', main).onclick = () => editLoc(null);
@@ -237,7 +237,7 @@ ROUTES.locations = {
 };
 
 // ================================================================ TEAM
-const APP_LIST = [['inventory', 'Inventory'], ['po', 'Purchase Order']];
+const APP_LIST = [['inventory', 'Inventory'], ['po', 'Purchase Order'], ['people', 'PeopleCore']];
 ROUTES.team = {
   async load() {
     if (!isAdmin()) return topbar('Team') + '<div class="notice">Only admins can manage the team.</div>';
@@ -247,7 +247,9 @@ ROUTES.team = {
     const pending = people.filter(p => p.role === 'pending');
     const admins = people.filter(p => ['admin', 'superadmin'].includes(p.role));
     const dom = (CFG.SIGNUP_DOMAIN || '').toLowerCase();
-    const offDomain = dom ? people.filter(p => !String(p.email || '').toLowerCase().endsWith('@' + dom) && p.role !== 'disabled') : [];
+    // 3.0: staff without a company email who signed up with the email on their PeopleCore record are fine as they are
+    const hrLinked = new Set(isSuper() ? (await q(sb.from('hr_employees').select('profile_id').not('profile_id', 'is', null)).catch(() => [])).map(x => x.profile_id) : []);
+    const offDomain = dom ? people.filter(p => !String(p.email || '').toLowerCase().endsWith('@' + dom) && p.role !== 'disabled' && !hrLinked.has(p.id)) : [];
     this.offDomain = offDomain;
     const roleOpts = p => isSuper() ? ['pending', 'staff', 'admin', 'management', 'superadmin', 'disabled'] : (['pending', 'staff', 'disabled'].includes(p.role) ? ['pending', 'staff', 'disabled'] : null);
     return topbar('Team', isSuper() ? 'Approve people, choose their access and service lines, and set who approves for each line.' : 'Approve new staff and assign them to the service lines you look after.') +
@@ -298,7 +300,7 @@ ROUTES.team = {
       return modal({ title: approveAfter ? `Approve ${p.full_name || p.email}` : `Service lines for ${p.full_name || p.email}`, submit: approveAfter ? 'Approve as staff' : 'Save',
         sub: approveAfter ? 'Choose which service line(s) they work in. They can then sign in straight away.' : 'They can change stock only in these lines.',
         body: S.depts.map(d => `<label class="check"><input type="checkbox" name="d${d.id}" ${cur.includes(d.id) ? 'checked' : ''} ${canAdmin(d.id) ? '' : 'disabled'}> ${esc(d.name)}${canAdmin(d.id) ? '' : ' <span class="sub">(not one of your lines)</span>'}</label>`).join('')
-          + (approveAfter ? `<div class="pjf-sec">Apps they can use</div>${APP_LIST.map(([k, l]) => `<label class="check"><input type="checkbox" name="app_${k}" ${(p.apps || ['inventory', 'po']).includes(k) ? 'checked' : ''}> ${esc(l)}</label>`).join('')}` : ''),
+          + (approveAfter ? `<div class="pjf-sec">Apps they can use</div>${APP_LIST.map(([k, l]) => `<label class="check"><input type="checkbox" name="app_${k}" ${(p.apps || ['inventory', 'po', 'people']).includes(k) ? 'checked' : ''}> ${esc(l)}</label>`).join('')}` : ''),
         onSubmit: async x => {
           const ids = S.depts.filter(d => x['d' + d.id] || (!canAdmin(d.id) && cur.includes(d.id))).map(d => d.id);
           if (approveAfter && !ids.length) throw new Error('Pick at least one service line.');

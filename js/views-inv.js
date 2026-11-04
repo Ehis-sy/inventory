@@ -232,7 +232,8 @@ ROUTES.inventory = {
   },
   filtered() {
     const f = S.inv; const qq = f.q.trim().toLowerCase().replace(/\s+/g, ' ');
-    const locN = f.loc ? locName(+f.loc) : '';
+    // items with stock at the chosen location (by the location itself, so any name works)
+    const atLoc = f.loc ? new Set((S.stock || []).filter(x => x.location_id === +f.loc && +x.qty > 0).map(x => x.item_id)) : null;
     const since = f.moved && f.moved !== 'never' ? localISO(-+f.moved) : null;
     return this.rows.filter(i => {
       if (f.view === 'archived' ? i.active : !i.active) return false;
@@ -241,7 +242,7 @@ ROUTES.inventory = {
       if (f.kind && i.kind !== f.kind) return false;
       if (f.st && i.subtype_id !== +f.st) return false;
       if (f.kit && !i.is_kit) return false;
-      if (locN && !(i.locations || '').split(', ').includes(locN)) return false;
+      if (atLoc && !atLoc.has(i.id)) return false;
       if (f.moved === 'never' && i.last_moved_at) return false;
       if (since && !(i.last_moved_at && i.last_moved_at.slice(0, 10) >= since)) return false;
       if (f.view === 'available' && !(+i.qty_available > 0)) return false;

@@ -88,7 +88,9 @@ const readOnly = () => !!S.viewAs || realRole() === 'management';
   const READ_RPC = new Set(['month_totals', 'period_flows', 'mark_notifications_read', 'log_signed_export', 'save_plan_snapshot', 'alert_status', 'preview_alert']);
   const blocked = () => { const msg = S.viewAs ? VIEW_MSG : MGMT_MSG; const p = new Proxy(function () { }, { get: (t, k) => k === 'then' ? (res => res({ data: null, error: { message: msg } })) : () => p, apply: () => p }); return p; };
   const _rpc = sb.rpc.bind(sb), _from = sb.from.bind(sb);
-  sb.rpc = (fn, args, opts) => (readOnly() && !READ_RPC.has(fn) && !(fn === 'log_signed_export' && S.viewAs)) ? blocked() : _rpc(fn, args, opts);
+  // 3.0: PeopleCore is everyone's own HR self-service, so Management can use it too (but nothing changes while viewing as a role)
+  const HR_READ = /^hr_(directory|team|my_profile|my_approvals|next_empno)$/;
+  sb.rpc = (fn, args, opts) => (readOnly() && !READ_RPC.has(fn) && !(fn === 'log_signed_export' && S.viewAs) && !HR_READ.test(fn) && !(/^hr_/.test(fn) && !S.viewAs)) ? blocked() : _rpc(fn, args, opts);
   sb.from = t => { const b = _from(t); if (readOnly()) ['insert', 'update', 'delete', 'upsert'].forEach(m => { b[m] = () => blocked(); }); return b; };
 })();
 function setViewAs(v) { S.viewAs = v; try { v ? sessionStorage.setItem('nest.viewAs', JSON.stringify(v)) : sessionStorage.removeItem('nest.viewAs'); } catch (e) { } S.shellReady = false; S.inv.edit = false; S.inv.changes.clear(); refreshAlerts(); render(); }
@@ -323,7 +325,7 @@ async function openBell() {
   const notes = await q(sb.from('notifications').select('*').order('created_at', { ascending: false }).limit(40)).catch(() => []);
   const R = S.alerts.reminders;
   if (S.viewAs) notes.length = 0;
-  const icon = k => ({ issued: 'truck', approval: 'check', count: 'count', late: 'clock', kit: 'kit', cert: 'cert', low: 'box', faulty: 'box', missing: 'truck', decision: 'check', signup: 'users', signoff: 'sign', backup: 'down', po: 'audit' }[k] || 'bell');
+  const icon = k => ({ issued: 'truck', approval: 'check', count: 'count', late: 'clock', kit: 'kit', cert: 'cert', low: 'box', faulty: 'box', missing: 'truck', decision: 'check', signup: 'users', signoff: 'sign', backup: 'down', po: 'audit', people: 'users' }[k] || 'bell');
   const li = (n, unread) => `<li class="${unread ? 'unread' : ''}"><a href="${esc(n.link || '#/dashboard')}" data-close><span class="ni ni-${esc(n.kind || 'x')}">${ico(icon(n.kind))}</span>
     <span><b>${esc(n.title)}</b>${n.body ? `<span class="sub">${esc(n.body)}</span>` : ''}${n.created_at ? `<span class="sub">${fdt(n.created_at)}</span>` : ''}</span></a></li>`;
   const d = document.createElement('div'); d.className = 'bellpanel'; d.setAttribute('role', 'dialog'); d.setAttribute('aria-label', 'Notifications');
@@ -421,7 +423,7 @@ function renderAuth(mode = 'signin', message = '', ok = false) {
       <button class="btn primary" type="submit">Sign in</button>
       <div class="alt"><a href="#" data-m="signup">Create an account</a><a href="#" data-m="forgot">Forgot password?</a></div></form>`);
   if (mode === 'signup') authShell(`<form id="f">
-      <h1>Create an account</h1><p class="sub">Use your ${esc(CFG.SIGNUP_DOMAIN ? '@' + CFG.SIGNUP_DOMAIN : 'company')} email. An admin approves new accounts and assigns your service line.</p>${note}
+      <h1>Create an account</h1><p class="sub">Use your ${esc(CFG.SIGNUP_DOMAIN ? '@' + CFG.SIGNUP_DOMAIN : 'company')} email (no company email? use the one HR has for you). An admin approves new accounts and assigns your service line.</p>${note}
       <label class="f">Full name<input type="text" name="name" autocomplete="name" required></label>
       <label class="f">Email<input type="email" name="email" autocomplete="email" required></label>
       <label class="f">Password<span class="hint">At least 8 characters.</span><input type="password" name="password" autocomplete="new-password" minlength="8" required></label>
@@ -443,11 +445,11 @@ function renderAuth(mode = 'signin', message = '', ok = false) {
         const { error } = await sb.auth.signInWithPassword({ email: d.email.trim(), password: d.password });
         if (error) throw new Error(/invalid login/i.test(error.message) ? 'Wrong email or password.' : /not confirmed/i.test(error.message) ? 'Confirm your email first: open the link we sent you.' : error.message);
       } else if (mode === 'signup') {
-        if (CFG.SIGNUP_DOMAIN && !d.email.trim().toLowerCase().endsWith('@' + CFG.SIGNUP_DOMAIN.toLowerCase())) throw new Error(`Only GANKCO email addresses (@${CFG.SIGNUP_DOMAIN}) can create an account.`);
+        // 3.0: the email domain is checked by the database (it also lets in the email HR has on someone's PeopleCore record)
         if (d.password.length < 8) throw new Error('Use at least 8 characters for the password.');
         const { data, error } = await sb.auth.signUp({ email: d.email.trim(), password: d.password,
           options: { data: { full_name: d.name.trim() }, emailRedirectTo: location.origin + location.pathname } });
-        if (error) throw new Error(/database error|only gankco/i.test(error.message) ? `Only GANKCO email addresses (@${CFG.SIGNUP_DOMAIN || 'gankcoenergy.com'}) can create an account.` : error.message);
+        if (error) throw new Error(/database error|only gankco/i.test(error.message) ? `Use your GANKCO email (@${CFG.SIGNUP_DOMAIN || 'gankcoenergy.com'}). If you don’t have one, ask HR to put your email on your PeopleCore record first.` : error.message);
         if (!data.session) return renderAuth('signin', 'Account created. Check your email for a confirmation link, then sign in.', true);
       } else {
         const { error } = await sb.auth.resetPasswordForEmail(d.email.trim(), { redirectTo: location.origin + location.pathname });
@@ -506,8 +508,9 @@ function canSignReport(r) {
 
 function navItems() {
   if (S.shellApp === 'po' && typeof poNav === 'function') return poNav();
+  if (S.shellApp === 'people' && typeof peopleNav === 'function') return peopleNav();
   if (S.shellApp === 'admin') return { main: [...(isAdmin() ? [['team', 'Team & access', 'users'], ['audit', 'Audit log', 'audit']] : []), ...(isSuper() ? [['settings', 'Nest settings', 'gear']] : []), ['account', 'My account', 'user']],
-    setup: [...(appAllowed('inventory') ? [['dashboard', 'Inventory', 'box']] : []), ...(appAllowed('po') ? [['po/overview', 'Purchase Order', 'audit']] : [])] };
+    setup: [...(appAllowed('inventory') ? [['dashboard', 'Inventory', 'box']] : []), ...(appAllowed('po') ? [['po/overview', 'Purchase Order', 'audit']] : []), ...(appAllowed('people') ? [['people', 'PeopleCore', 'users']] : [])] };
   const main = [['dashboard', 'Overview', 'home'], ['inventory', 'Inventory', 'box'], ['scan', 'Scan', 'scan'],
     ['jobs', 'Materials requests', 'truck'], ['planner', 'Job planner', 'plan'], ['checkouts', 'Out on jobs', 'out'], ['count', 'Monthly count', 'count'],
     ['certs', 'Certificates & kits', 'cert'], ['reports', 'Reports', 'chart'], ['signoffs', 'Sign-offs', 'sign'], ['activity', 'Activity', 'clock'],
@@ -524,18 +527,18 @@ function shell() {
   $('#app').innerHTML = `<div class="shell">
     <aside class="side">
       <a class="brand" href="#/"><img src="brand/mark-96.png" alt="">
-        <span class="brand-name">${wordmark()}<small>Nest · ${S.shellApp === 'po' ? 'Purchasing' : S.shellApp === 'admin' ? 'Admin' : 'Inventory'}</small></span></a>
+        <span class="brand-name">${wordmark()}<small>Nest · ${S.shellApp === 'po' ? 'Purchasing' : S.shellApp === 'admin' ? 'Admin' : S.shellApp === 'people' ? 'PeopleCore' : 'Inventory'}</small></span></a>
       <a class="apps-link" href="#/">${ico('grid')}All apps</a>
       <nav class="nav">${main.map(link).join('')}
         ${setup.length ? `<div class="nav-group">${S.shellApp === 'admin' ? 'Apps' : 'Setup'}</div>${setup.map(link).join('')}` : ''}</nav>
       <div class="side-foot">${CFG.TAGLINE ? `<div class="motto">${esc(CFG.TAGLINE)}</div>` : ''}
-        <a class="who" href="#/account">${esc(p.full_name || p.email)}</a><div class="role">${ROLE_LABEL[role()]}${!isSuper() && !isMgmt() ? ' · ' + esc(myLineIds().map(lineShort).join(', ') || 'no service line') : ''}</div>
+        <a class="who" href="#/account">${esc(p.full_name || p.email)}</a><div class="role">${S.shellApp === 'people' && typeof hrRole === 'function' ? esc(hrRole() === 'hr_admin' ? 'HR admin' : hrRole() === 'hr_officer' ? 'HR officer' : S.hr?.me?.card?.title || ROLE_LABEL[role()]) : ROLE_LABEL[role()] + (!isSuper() && !isMgmt() ? ' · ' + esc(myLineIds().map(lineShort).join(', ') || 'no service line') : '')}</div>
         ${realSuper() ? `<button class="btn small viewas-btn" id="viewas">${S.viewAs ? 'Change view' : 'View as…'}</button>` : ''}
         <a href="#" id="signout">Sign out</a></div>
     </aside>${viewAsBar()}
     <main id="main"></main>
     <button class="bell" id="bell" aria-label="Notifications">${ico('bell')}<span class="bell-count" hidden></span></button>
-    ${S.shellApp === 'po' && typeof poBottomBar === 'function' ? poBottomBar() : S.shellApp === 'admin' ? `<nav class="bottombar">
+    ${S.shellApp === 'po' && typeof poBottomBar === 'function' ? poBottomBar() : S.shellApp === 'people' && typeof peopleBottomBar === 'function' ? peopleBottomBar() : S.shellApp === 'admin' ? `<nav class="bottombar">
       ${isAdmin() ? `<a href="#/team" data-r="team">${ico('users')}Team</a><a href="#/audit" data-r="audit">${ico('audit')}Audit</a>` : ''}${isSuper() ? `<a href="#/settings" data-r="settings">${ico('gear')}Settings</a>` : ''}
       <a href="#/account" data-r="account">${ico('user')}Account</a><a href="#/" data-r="home">${ico('grid')}Apps</a></nav>` : `<nav class="bottombar">
       <a href="#/dashboard" data-r="dashboard">${ico('home')}Overview</a>
@@ -553,7 +556,8 @@ function shell() {
 function setNav(r) { $$('[data-r]').forEach(a => a.classList.toggle('on', a.dataset.r === r)); }
 
 const ROUTES = {};
-ROUTES.noapp = { load: async () => topbar('Inventory') + `<div class="notice">You don’t have access to the Inventory app. Ask the Nest admin if you need it.</div><a class="btn" href="#/">Back to Nest home</a>` };
+const APP_NAMES = { inventory: 'Inventory', po: 'Purchase Order', people: 'PeopleCore' };
+ROUTES.noapp = { load: async () => topbar(APP_NAMES[S.shellApp] || 'Nest') + `<div class="notice">You don’t have access to ${esc(APP_NAMES[S.shellApp] || 'this app')}. Ask the Nest admin if you need it.</div><a class="btn" href="#/">Back to Nest home</a>` };
 let renderSeq = 0;
 async function render(opts = {}) {
   if (!S.session || !isActive()) return;
@@ -563,25 +567,28 @@ async function render(opts = {}) {
   if (typeof maintGate === 'function' && maintGate(r)) return;
   if (r === '' || r === 'home') { S.shellReady = false; return renderLauncher(); }
   if (S.inv.edit && r !== 'inventory') { S.inv.edit = false; S.inv.changes.clear(); }
-  const app = r === 'po' ? 'po' : ADMIN_ROUTES.includes(r) ? 'admin' : r === 'account' ? (S.shellApp || 'admin') : 'inventory';
+  const app = r === 'po' ? 'po' : r === 'people' ? 'people' : ADMIN_ROUTES.includes(r) ? 'admin' : r === 'account' ? (S.shellApp || 'admin') : 'inventory';
   if (S.shellApp !== app) { S.shellApp = app; S.shellReady = false; }
   shell();
   // 2.8: an app someone doesn't have can't be opened, even by typing its address
-  const blocked = app === 'inventory' && !appAllowed('inventory');
+  const blocked = (app === 'inventory' || app === 'people') && !appAllowed(app);
   const view = blocked ? ROUTES.noapp : (ROUTES[r] || ROUTES.dashboard);
-  setNav(r === 'item' ? 'inventory' : r === 'job' ? 'jobs' : r === 'po' ? (parts[1] && isNaN(+parts[1]) ? 'po/' + parts[1] : 'po') : r);
-  const main = $('#main'); const seq = ++renderSeq;
+  setNav(r === 'item' ? 'inventory' : r === 'job' ? 'jobs' : r === 'po' ? (parts[1] && isNaN(+parts[1]) ? 'po/' + parts[1] : 'po') : r === 'people' ? (parts[1] === 'emp' ? 'people/staff' : parts[1] ? 'people/' + parts[1] : 'people') : r);
+  let main = $('#main'); const seq = ++renderSeq;
   const y = window.scrollY;
   if (!opts.quiet) main.innerHTML = '<div class="loading">Loading…</div>';
   try {
     const html = await view.load(parts, params);
     if (seq !== renderSeq) return;
+    // 3.0: a page may rebuild the menu while it loads (PeopleCore), so write into the current main area
+    if (!main.isConnected) main = $('#main');
     main.innerHTML = (typeof maintBars === 'function' ? maintBars(app, true) : '') + html + `<div class="pagefoot">${esc(CFG.APP_NAME)} · ${esc(CFG.TAGLINE || '')} · v${esc(CFG.VERSION || '')}</div>`;
     if (typeof bindMaintBars === 'function') bindMaintBars(main);
     view.bind && view.bind(main, parts, params);
     if (opts.quiet) window.scrollTo(0, y); else window.scrollTo(0, 0);
   } catch (e) {
     console.error(e);
+    if (!main.isConnected) main = $('#main') || main;
     if (seq === renderSeq) main.innerHTML = `<div class="notice bad">${esc(niceError(e))}</div><button class="btn" onclick="location.reload()">Reload</button>`;
   }
 }
@@ -626,6 +633,7 @@ async function renderLauncher() {
     <section class="tiles">
       ${appAllowed('inventory') ? appTile('inventory', '#/dashboard', 'box', 'Inventory', 'Equipment, stock, materials requests, monthly counts and reports.', '<span class="t-meta" id="invMeta">Open</span>', true) : lockedTile('box', 'Inventory', 'Equipment, stock, materials requests, monthly counts and reports.')}
       ${typeof poCanView === 'function' && poCanView() ? appTile('po', '#/po/overview', 'audit', 'Purchase Order', 'Raise, sign and track purchase orders to OEMs and suppliers.', '<span class="t-meta" id="poMeta">Open</span>', true) : lockedTile('audit', 'Purchase Order', 'Raise, sign and track purchase orders to OEMs and suppliers.')}
+      ${appAllowed('people') ? appTile('people', '#/people', 'users', 'PeopleCore', 'Your HR self-service: profile, directory, org chart and approvals.', '<span class="t-meta" id="hrMeta">Open</span>', true) : lockedTile('users', 'PeopleCore', 'Your HR self-service: profile, directory, org chart and approvals.')}
       ${appTile('proforma', null, 'chart', 'Proforma Invoice &amp; Quote', 'Prepare quotes and proforma invoices for clients.', '<span class="t-meta">Coming later</span>')}
     </section>
     <footer class="l-foot">${esc(CFG.COMPANY || '')} · ${esc(CFG.MOTTO || '')}<br><span>${esc(CFG.APP_NAME)} v${esc(CFG.VERSION || '')} · <span class="credit">${esc(CREDIT)}</span></span></footer></div>`;
@@ -636,6 +644,7 @@ async function renderLauncher() {
   await refreshAlerts();
   const m = $('#invMeta'); if (m) { const n = S.alerts.reminders.length; m.textContent = n ? `${plural(n, 'thing')} ${n === 1 ? 'needs' : 'need'} attention` : 'All up to date'; if (n) m.classList.add('hot'); }
   const pm = $('#poMeta'); if (pm && typeof poTileMeta === 'function') poTileMeta(pm);
+  const hm = $('#hrMeta'); if (hm && typeof peopleTileMeta === 'function') peopleTileMeta(hm);
 }
 
 // Handheld (keyboard-wedge) scanners: fast keystrokes ending in Enter, outside any text field
