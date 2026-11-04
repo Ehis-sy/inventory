@@ -2,14 +2,18 @@
 'use strict';
 
 const PO_CUR = {
-  USD: { sym: '$', name: 'US Dollars', one: 'US Dollar', minor: 'Cents', minor1: 'Cent' },
+  USD: { sym: '$', name: 'Dollars', one: 'Dollar', minor: 'Cents', minor1: 'Cent' },
   NGN: { sym: '₦', name: 'Naira', one: 'Naira', minor: 'Kobo', minor1: 'Kobo' },
-  GBP: { sym: '£', name: 'Pounds Sterling', one: 'Pound Sterling', minor: 'Pence', minor1: 'Penny' },
+  GBP: { sym: '£', name: 'Pounds', one: 'Pound', minor: 'Pence', minor1: 'Penny' },
   EUR: { sym: '€', name: 'Euros', one: 'Euro', minor: 'Cents', minor1: 'Cent' },
 };
 const poMoney = (n, cur = 'USD') => (PO_CUR[cur]?.sym || '') + (+n || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 const poNum = n => (+n || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
-const poDate = d => d ? new Date(String(d).slice(0, 10) + 'T00:00:00').toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' }) : '';
+// on the PO itself: 18/08/2025, and totals as "USD 172,863.65" (as on the company's POs)
+const poDate = d => d ? new Date(String(d).slice(0, 10) + 'T00:00:00').toLocaleDateString('en-GB', { day: '2-digit', month: '2-digit', year: 'numeric' }) : '';
+const poDocMoney = (n, cur = 'USD') => `${cur} ${poNum(n)}`;
+const poStamp = (d = new Date()) => `${d.toLocaleDateString('en-GB', { day: '2-digit', month: '2-digit', year: 'numeric' })} ${d.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' })}`;
+const poPhoneText = (phone, fax) => [phone || '', fax ? `${phone ? '      ' : ''}Fax: ${fax}` : ''].join('');
 const poAmount = l => Math.round((+l.qty || 0) * (+l.rate || 0) * 100) / 100;
 
 // "Fifteen Thousand Five Hundred and Eighty US Dollars Only"
@@ -20,7 +24,7 @@ function poWords(n, cur = 'USD') {
   const below1000 = x => {
     const h = Math.floor(x / 100), r = x % 100; const out = [];
     if (h) out.push(ones[h] + ' Hundred');
-    if (r) out.push((h ? 'and ' : '') + (r < 20 ? ones[r] : tens[Math.floor(r / 10)] + (r % 10 ? '-' + ones[r % 10] : '')));
+    if (r) out.push((h ? 'and ' : '') + (r < 20 ? ones[r] : tens[Math.floor(r / 10)] + (r % 10 ? ' ' + ones[r % 10] : '')));
     return out.join(' ');
   };
   const words = x => {
@@ -31,9 +35,8 @@ function poWords(n, cur = 'USD') {
     return parts.join(' ');
   };
   const v = Math.round((+n || 0) * 100); const major = Math.floor(v / 100), minor = v % 100;
-  let s = `${words(major)} ${major === 1 ? C.one : C.name}`;
-  if (minor) s += ` and ${words(minor)} ${minor === 1 ? C.minor1 : C.minor}`;
-  return s + ' Only';
+  const s = `${words(major)} ${major === 1 ? C.one : C.name}`;
+  return minor ? `${s}, ${words(minor)} ${minor === 1 ? C.minor1 : C.minor}` : `${s} Only`;
 }
 
 // The company header and delivery address, from the PO settings saved with the document
@@ -50,15 +53,21 @@ function poDocFrom(src, extra = {}) {
   const subtotal = Math.round(lines.filter(l => l.kind === 'item').reduce((a, l) => a + poAmount(l), 0) * 100) / 100;
   const tax = src.tax_amount == null || src.tax_amount === '' ? null : +src.tax_amount;
   return { no: src.po_no_full || null, po_date: src.po_date, delivery_date: src.delivery_date, deliver_to: src.deliver_to || '', currency: src.currency || 'USD',
-    supplier_name: src.supplier_name || '', supplier_address: src.supplier_address || '', supplier_phone: src.supplier_phone || '', pan: src.pan || '', gstin: src.gstin || '',
+    supplier_name: src.supplier_name || '', supplier_address: src.supplier_address || '', supplier_phone: src.supplier_phone || '', supplier_fax: src.supplier_fax || '', pan: src.pan || '', gstin: src.gstin || '', quote_ref: src.quote_ref || '',
     lines, subtotal, tax_amount: tax, total: Math.round((subtotal + (tax || 0)) * 100) / 100, tax_summary: src.tax_summary || {}, note: src.note || '', terms: src.terms || '',
     settings: src.settings || setting('po', {}), signature: src.signature || null, draft: false, superseded: false, ...extra };
 }
-const poFileName = (doc, ext) => `${(doc.no || 'Draft PO').replace(/[^A-Za-z0-9-]+/g, '-')}${doc.supplier_name ? ' ' + doc.supplier_name.replace(/[^A-Za-z0-9 &-]+/g, '').trim().slice(0, 40) : ''}${doc.draft ? ' (draft)' : ''}.${ext}`;
+// "Purchase Order GES-WI-PO-10038-2026 Thru Tubing Systems Inc QN 092624-01JH, 030325-01JH.pdf"
+const poFileName = (doc, ext) => {
+  const clean = v => String(v || '').replace(/[\\/:*?"<>|]+/g, ' ').replace(/[.,]+$/g, '').replace(/\s+/g, ' ').trim();
+  const sup = clean(String(doc.supplier_name || '').replace(/[.,]/g, '')).slice(0, 60);
+  return [`Purchase Order ${doc.draft ? 'DRAFT' : clean(doc.no)}`, sup, doc.quote_ref ? 'QN ' + clean(doc.quote_ref).slice(0, 80) : ''].filter(Boolean).join(' ') + (doc.superseded ? ' (superseded)' : '') + '.' + ext;
+};
 // lines numbered like the Excel POs: headings are A, B, C…; items restart at 1 after each heading
+// headings are A, B, C…; item numbers run on across headings (as on the company's POs)
 function poNumber(lines) {
   let h = 0, n = 0; const out = [];
-  for (const l of lines) { if (l.kind === 'heading') { out.push({ ...l, sno: String.fromCharCode(65 + (h++ % 26)) }); n = 0; } else out.push({ ...l, sno: ++n }); }
+  for (const l of lines) out.push(l.kind === 'heading' ? { ...l, sno: String.fromCharCode(65 + (h++ % 26)) } : { ...l, sno: ++n });
   return out;
 }
 
@@ -73,7 +82,7 @@ async function poExcel(doc) {
   ws.properties.defaultRowHeight = 14.4;
   ws.headerFooter = { oddHeader: '&L&D &T', oddFooter: '&R&P/&N' };
   Object.entries(P.cols).forEach(([L, w]) => { ws.getColumn(L).width = w; });
-  const money = f => f.replace(/"\$"/g, `"${C.sym}"`);
+  const money = f => f.replace(/"\$"/g, `"${doc.currency} "`);
   const style = (cell, si, fmtMoney) => {
     const s = P.styles[si]; if (!s) return;
     if (s.font) cell.font = { ...s.font };
@@ -102,7 +111,7 @@ async function poExcel(doc) {
   ws.getCell('K5').value = 'Contact No: ' + (head.phone || '');
   ws.getCell('C8').value = colonOnly(doc.supplier_name); ws.getCell('I8').value = colonOnly(poDate(doc.po_date));
   ws.getCell('C9').value = colonOnly(doc.supplier_address); ws.getCell('I9').value = colonOnly(doc.no || 'Draft');
-  ws.getCell('C10').value = colonOnly(doc.supplier_phone); ws.getCell('I10').value = colonOnly(doc.pan);
+  ws.getCell('C10').value = colonOnly(poPhoneText(doc.supplier_phone, doc.supplier_fax)); ws.getCell('I10').value = colonOnly(doc.pan);
   ws.getCell('C11').value = colonOnly(doc.gstin); ws.getCell('I11').value = colonOnly(poDate(doc.delivery_date));
   P.merges.filter(m => +m.match(/\d+/)[0] <= 11).forEach(merge);
   // 12: Deliver To (Abuja office, Port Harcourt office, or blank)
@@ -164,8 +173,9 @@ async function poExcel(doc) {
   ws.addImage(wb.addImage({ base64: logo.base64, extension: 'png' }), { tl: { col: 0.09, row: 0.4 }, ext: { width: 164, height: 47 } });
   const sig = doc.signature?.signature_id ? (await sigImages([doc.signature.signature_id]))[doc.signature.signature_id] : null;
   if (sig) {
-    let h = 71, w = h * sig.w / sig.h; if (w > 162) { w = 162; h = w * sig.h / sig.w; }
-    ws.addImage(wb.addImage({ base64: sig.dataUrl.split(',')[1], extension: 'png' }), { tl: { col: 8.2, row: 34.65 + o }, ext: { width: w, height: h } });
+    const k = sig.scale || 1; let h = 56 * k, w = h * sig.w / sig.h; if (w > 170 * k) { w = 170 * k; h = w * sig.h / sig.w; }
+    // sits just above "Signed" (the sample's spot), moved by the person's own adjustment
+    ws.addImage(wb.addImage({ base64: sig.dataUrl.split(',')[1], extension: 'png' }), { tl: { col: 8.3, row: Math.max(34.2, 37.95 - h / 19.2 + (sig.dy || 0) / 5) + o }, ext: { width: w, height: h } });
   }
   if (doc.draft || doc.superseded) {
     const c = ws.getCell('A6'); c.value = doc.draft ? 'DRAFT: not issued' : 'SUPERSEDED: a later revision replaces this PO';
@@ -208,7 +218,7 @@ async function poPdf(doc, { output } = {}) {
   // header block
   y += 6.2;
   const rows = [['Name', doc.supplier_name, 'P.O. Date', poDate(doc.po_date)], ['Address', doc.supplier_address, 'P.O. No.', doc.no || 'Draft'],
-    ['Phone', doc.supplier_phone, 'PAN', doc.pan], ['GSTIN', doc.gstin, 'Delivery Date', poDate(doc.delivery_date)],
+    ['Phone', poPhoneText(doc.supplier_phone, doc.supplier_fax), 'PAN', doc.pan], ['GSTIN', doc.gstin, 'Delivery Date', poDate(doc.delivery_date)],
     ['Deliver To', doc.deliver_to ? poOfficeText(doc.settings, doc.deliver_to) : '', null, null]];
   const vx = cx[2], vw = span(2, 4) - 2, rx = cx[5], rvx = cx[8], rvw = span(8, 10);
   rows.forEach(([k, v, k2, v2]) => {
@@ -248,7 +258,7 @@ async function poPdf(doc, { output } = {}) {
   // totals
   room(20);
   const tx = cx[6], vx2 = Rr;
-  [['Sub Total Amount:', poMoney(doc.subtotal, doc.currency)], ['Total TaxAmount:', doc.tax_amount == null ? C.sym + '   -' : poMoney(doc.tax_amount, doc.currency)], ['Order Amount:', poMoney(doc.total, doc.currency)]].forEach(([k, v], i) => {
+  [['Sub Total Amount:', poDocMoney(doc.subtotal, doc.currency)], ['Total Tax Amount:', poDocMoney(doc.tax_amount || 0, doc.currency)], ['Order Amount:', poDocMoney(doc.total, doc.currency)]].forEach(([k, v], i) => {
     font(i === 2, 8.4); pdf.text(k, tx, y + 3.6); pdf.text(v, vx2, y + 3.6, { align: 'right' }); y += 5;
   });
   line(L, y, Rr, y, .5);
@@ -277,15 +287,18 @@ async function poPdf(doc, { output } = {}) {
   // for: company, signature
   room(34); y += 6;
   font(true, 9.2); pdf.text('For : ' + T(st.company || 'GANKCO ENERGY SERVICES'), Rr, y, { align: 'right' });
-  if (sig) { let h = 16, w = h * sig.w / sig.h; if (w > 44) { w = 44; h = w * sig.h / sig.w; } pdf.addImage(sig.dataUrl, 'PNG', Rr - 12 - w, y + 1.5, w, h, 'po-sig', 'FAST'); }
-  font(true, 8.4); pdf.text('Signed', Rr - 22, y + 21, { align: 'center' });
-  if (doc.signature?.name) { font(false, 7.4, [90, 90, 90]); pdf.text(T(doc.signature.name) + (doc.signature.title ? ' · ' + T(doc.signature.title) : ''), Rr, y + 25, { align: 'right' }); }
+  // the signature sits right on "Signed", centred over it; each person can adjust its size and position (My account)
+  const signedX = Rr - 22, signedY = y + 21;
+  if (sig) { const k = sig.scale || 1; let h = 13 * k, w = h * sig.w / sig.h; if (w > 46 * k) { w = 46 * k; h = w * sig.h / sig.w; }
+    pdf.addImage(sig.dataUrl, 'PNG', signedX - w / 2, signedY - 3.2 - h + (sig.dy || 0), w, h, 'po-sig', 'FAST'); }
+  font(true, 8.4); pdf.text('Signed', signedX, signedY, { align: 'center' });
   // page numbers and marks
   const pages = pdf.getNumberOfPages();
+  const made = poStamp();
   for (let i = 1; i <= pages; i++) {
-    pdf.setPage(i); font(false, 7, [120, 120, 120]);
-    pdf.text(`${doc.no || 'Draft purchase order'} · Page ${i} of ${pages}`, Rr, H - 8, { align: 'right' });
-    if (doc.signature?.signed_at && !doc.draft) pdf.text(`Signed in GANKCO Nest · ${pdfStamp(doc.signature.signed_at)}`, L, H - 8);
+    // like the Excel print: when it was generated at the top left, page x/y at the bottom right
+    pdf.setPage(i); font(false, 7.6, [60, 60, 60]);
+    pdf.text(made, L, 7.5); pdf.text(`${i}/${pages}`, Rr, H - 7, { align: 'right' });
     if (doc.draft || doc.superseded) {
       pdf.saveGraphicsState(); pdf.setGState(new pdf.GState({ opacity: 0.12 }));
       font(true, 64, [120, 120, 120]); pdf.text(doc.draft ? 'DRAFT' : 'SUPERSEDED', W / 2, H / 2 + 12, { align: 'center', angle: 28 });

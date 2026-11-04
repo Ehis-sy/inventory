@@ -243,6 +243,7 @@ ROUTES.locations = {
 };
 
 // ================================================================ TEAM
+const APP_LIST = [['inventory', 'Inventory'], ['po', 'Purchase Order']];
 ROUTES.team = {
   async load() {
     if (!isAdmin()) return topbar('Team') + '<div class="notice">Only admins can manage the team.</div>';
@@ -262,7 +263,7 @@ ROUTES.team = {
       ${pending.length ? `<section class="panel"><header><h2>Waiting for approval</h2><span class="meta">${pending.length}</span></header><ul class="list">
         ${pending.map(p => `<li><div style="flex:1"><div class="name">${esc(p.full_name || '—')}</div><div class="sub">${esc(p.email)} · signed up ${fd(p.created_at)}</div></div>
           <div class="end"><button class="btn small tagbtn" data-approve="${p.id}">Approve</button> <button class="btn small" data-deny="${p.id}">Deny</button></div></li>`).join('')}</ul></section>` : ''}
-      <section class="panel"><header><h2>Everyone</h2><span class="meta">${people.length}</span></header><div class="tablewrap"><table class="t stack"><thead><tr><th>Name</th><th>Job title</th><th>Email</th><th>Access</th><th>Service lines</th><th>Purchase Order</th><th>Signature</th><th></th></tr></thead><tbody>
+      <section class="panel"><header><h2>Everyone</h2><span class="meta">${people.length}</span></header><div class="tablewrap"><table class="t stack"><thead><tr><th>Name</th><th>Job title</th><th>Email</th><th>Access</th><th>Service lines</th><th>Apps</th><th>Signature</th><th></th></tr></thead><tbody>
       ${people.map(p => { const ro = roleOpts(p); const ls = linesOf(p.id);
         const off = offDomain.includes(p);
         const act = !['pending', 'disabled'].includes(p.role);
@@ -270,8 +271,9 @@ ROUTES.team = {
         <td>${p.job_title ? esc(p.job_title) : act ? chip('soon', 'No job title') : '<span class="sub">—</span>'}${canEditTitle(p) ? ` <button class="btn small link" data-title="${p.id}">${p.job_title ? 'Edit' : 'Set'}</button>` : ''}</td><td>${esc(p.email)}${off ? ' ' + chip('soon', 'Not a GANKCO email') : ''}</td>
         <td>${ro && p.id !== S.profile.id ? `<select data-role="${p.id}" class="inline">${ro.map(k => opt(k, ROLE_LABEL[k], p.role)).join('')}</select>` : chip(p.role === 'superadmin' ? 'out' : p.role === 'admin' ? 'reserved' : p.role === 'management' ? 'soon' : 'muted', ROLE_LABEL[p.role])}</td>
         <td>${p.role === 'superadmin' ? '<span class="sub">All lines</span>' : ls.length ? ls.map(d => `<span class="linebadge">${esc(lineShort(d))}</span>`).join(' ') : '<span class="sub">None</span>'}</td>
-        <td>${p.role === 'superadmin' ? '<span class="sub">Always</span>' : p.role === 'management' ? '<span class="sub">View only</span>' : !act ? '<span class="sub">—</span>'
-          : `<label class="switch mini" title="Can raise purchase orders"><input type="checkbox" data-po="${p.id}" ${(p.apps || []).includes('po') ? 'checked' : ''}><span class="sw"></span><span class="sub">${(p.apps || []).includes('po') ? 'Can raise POs' : 'No access'}</span></label>`}</td>
+        <td class="apps-cell">${p.role === 'superadmin' ? '<span class="sub">All apps</span>' : p.role === 'disabled' ? '<span class="sub">—</span>'
+          : APP_LIST.map(([k, l]) => { const on = (p.apps || []).includes(k); const can = isSuper() || ['staff', 'pending'].includes(p.role);
+            return `<label class="appchk ${on ? 'on' : ''}" title="${esc(l)}${p.role === 'management' ? ' (view only)' : ''}"><input type="checkbox" data-app="${k}" data-pid="${p.id}" ${on ? 'checked' : ''} ${can ? '' : 'disabled'}>${esc(l)}</label>`; }).join('')}</td>
         <td>${p.signature_id ? chip('ok', 'Added') : '<span class="sub">Not added</span>'}${p.signature_id && isSuper() && p.id !== S.profile.id ? ` <button class="btn small link danger" data-unsig="${p.id}">Remove</button>` : ''}</td>
         <td class="num nowrap">${off && isSuper() ? `<button class="btn small" data-fix="${p.id}">Fix email</button> ` : ''}${p.role !== 'superadmin' && (isSuper() || ['staff', 'pending', 'disabled'].includes(p.role)) ? `<button class="btn small" data-lines="${p.id}">Lines</button>` : ''}</td></tr>`; }).join('')}
       </tbody></table></div></section>
@@ -292,7 +294,8 @@ ROUTES.team = {
         <dl class="kv mt"><dt>Staff</dt><dd>Day-to-day work in their own service line(s): check out and in, materials requests, receive, move between locations, issue and sell, monthly counts and certificates. Quantity corrections and kit details go to their admin for approval. Staff can see all stock but don’t see Setup.</dd>
         <dt>Admin</dt><dd>Everything staff can do, plus approving requests and managing items for their service lines, locations, labels, approving new staff, and the audit log for their lines.</dd>
         <dt>Management</dt><dd>View-only: Overview, Inventory, Job planner, Reports and Sign-offs, including prices. Can download reports but can’t change anything. Only the Super Admin can give this access.</dd>
-        <dt>Super Admin</dt><dd>Everything, in every service line: making admins, choosing who approves for each line, settings, and the full audit log.</dd></dl></div></section>`;
+        <dt>Super Admin</dt><dd>Everything, in every service line and every app: making admins, choosing who approves for each line, settings, and the full audit log.</dd>
+        <dt>Apps</dt><dd>Tick the apps each person can open. Someone without Inventory can’t open it or read its data, even by typing the web address. In the Purchase Order app they can still pick Inventory items onto a PO (code, name and unit only).</dd></dl></div></section>`;
   },
   bind(main) {
     if (!isAdmin()) return;
@@ -300,12 +303,17 @@ ROUTES.team = {
       const p = S.people[pid]; const cur = S.members.filter(m => m.profile_id === pid).map(m => m.department_id);
       return modal({ title: approveAfter ? `Approve ${p.full_name || p.email}` : `Service lines for ${p.full_name || p.email}`, submit: approveAfter ? 'Approve as staff' : 'Save',
         sub: approveAfter ? 'Choose which service line(s) they work in. They can then sign in straight away.' : 'They can change stock only in these lines.',
-        body: S.depts.map(d => `<label class="check"><input type="checkbox" name="d${d.id}" ${cur.includes(d.id) ? 'checked' : ''} ${canAdmin(d.id) ? '' : 'disabled'}> ${esc(d.name)}${canAdmin(d.id) ? '' : ' <span class="sub">(not one of your lines)</span>'}</label>`).join(''),
+        body: S.depts.map(d => `<label class="check"><input type="checkbox" name="d${d.id}" ${cur.includes(d.id) ? 'checked' : ''} ${canAdmin(d.id) ? '' : 'disabled'}> ${esc(d.name)}${canAdmin(d.id) ? '' : ' <span class="sub">(not one of your lines)</span>'}</label>`).join('')
+          + (approveAfter ? `<div class="pjf-sec">Apps they can use</div>${APP_LIST.map(([k, l]) => `<label class="check"><input type="checkbox" name="app_${k}" ${(p.apps || ['inventory', 'po']).includes(k) ? 'checked' : ''}> ${esc(l)}</label>`).join('')}` : ''),
         onSubmit: async x => {
           const ids = S.depts.filter(d => x['d' + d.id] || (!canAdmin(d.id) && cur.includes(d.id))).map(d => d.id);
           if (approveAfter && !ids.length) throw new Error('Pick at least one service line.');
           await q(sb.rpc('set_user_lines', { p_user: pid, p_depts: ids }));
-          if (approveAfter) await q(sb.rpc('set_user_role', { p_user: pid, p_role: 'staff' }));
+          if (approveAfter) {
+            if (!APP_LIST.some(([k]) => x['app_' + k])) throw new Error('Tick at least one app.');
+            for (const [k] of APP_LIST) await q(sb.rpc('set_app_access', { p_user: pid, p_app: k, p_on: !!x['app_' + k] }));
+            await q(sb.rpc('set_user_role', { p_user: pid, p_role: 'staff' }));
+          }
           toast(approveAfter ? 'Approved' : 'Service lines saved'); await loadLookups(); render({ quiet: true });
         } });
     };
@@ -314,8 +322,9 @@ ROUTES.team = {
     $$('[data-lines]', main).forEach(b => b.onclick = () => editLines(b.dataset.lines, false));
     $$('[data-fix]', main).forEach(b => b.onclick = () => fixEmail(S.people[b.dataset.fix]));
     $$('[data-title]', main).forEach(b => b.onclick = () => editJobTitle(S.people[b.dataset.title]));
-    $$('[data-po]', main).forEach(c => c.onchange = async () => {
-      try { await q(sb.rpc('set_po_access', { p_user: c.dataset.po, p_on: c.checked })); toast(c.checked ? 'Can raise purchase orders' : 'Purchase Order access removed'); await loadLookups(); render({ quiet: true }); }
+    $$('[data-app]', main).forEach(c => c.onchange = async () => {
+      const l = APP_LIST.find(a => a[0] === c.dataset.app)[1];
+      try { await q(sb.rpc('set_app_access', { p_user: c.dataset.pid, p_app: c.dataset.app, p_on: c.checked })); toast(c.checked ? `${l} switched on` : `${l} switched off`); await loadLookups(); render({ quiet: true }); }
       catch (e) { c.checked = !c.checked; toast(niceError(e), true); }
     });
     $$('[data-porecv]', main).forEach(c => c.onchange = async () => {
@@ -420,12 +429,23 @@ ROUTES.audit = {
 };
 
 // ================================================================ SETTINGS
+// Nest settings (2.8): apply to every app
 ROUTES.settings = {
   async load() {
-    if (!isSuper()) return topbar('Settings') + '<div class="notice">Only the Super Admin can change settings.</div>';
+    if (!isSuper()) return topbar('Nest settings') + '<div class="notice">Only the Super Admin can change settings.</div>';
+    await loadLookups();
+    return topbar('Nest settings', 'These apply to every app. Each app’s own settings are in that app’s menu: Inventory settings, and PO settings in the Purchase Order app.') +
+      `${typeof companyPanel === 'function' ? companyPanel() : ''}${await alertsPanel()}${maintPanel()}${backupPanel()}`;
+  },
+  bind(main) { if (typeof bindCompanyPanel === 'function') bindCompanyPanel(main); bindBackup(main); bindAlertsPanel(main); bindMaintPanel(main); }
+};
+// Inventory settings (2.8): count dates, warnings and the QMS form details
+ROUTES.invsettings = {
+  async load() {
+    if (!isSuper()) return topbar('Inventory settings') + '<div class="notice">Only the Super Admin can change settings.</div>';
     await loadLookups();
     const s = k => esc(setting(k, ''));
-    return topbar('Settings', 'These apply to everyone.') + `<form id="sf" class="cols">
+    return topbar('Inventory settings', 'These apply to everyone using Inventory.') + `<form id="sf" class="cols">
       <section class="panel"><header><h2>Monthly count</h2></header><div class="body">
         <div class="row2"><label class="f">Count opens on day<input type="number" min="1" max="28" name="count_open_day" value="${s('count_open_day')}"></label>
         <label class="f">Deadline (end of day)<input type="number" min="1" max="28" name="count_close_day" value="${s('count_close_day')}"></label></div></div></section>
@@ -435,12 +455,10 @@ ROUTES.settings = {
       <section class="panel"><header><h2>QMS form details on reports</h2></header><div class="body">
         <label class="f">Ref No.<input type="text" name="form_ref" value="${s('form_ref')}"></label>
         <div class="row2"><label class="f">Issue date<input type="text" name="form_issue" value="${s('form_issue')}"></label><label class="f">Revision<input type="text" name="form_revision" value="${s('form_revision')}"></label></div></div></section>
-      <div><button class="btn primary" type="submit">Save settings</button></div></form>
-      ${await alertsPanel()}${maintPanel()}${backupPanel()}`;
+      <div><button class="btn primary" type="submit">Save settings</button></div></form>`;
   },
   bind(main) {
     const f = $('#sf', main); if (!f) return;
-    bindBackup(main); bindAlertsPanel(main); bindMaintPanel(main);
     f.onsubmit = async e => {
       e.preventDefault(); const d = Object.fromEntries(new FormData(f));
       if (+d.count_open_day > +d.count_close_day) return toast('The count must open before the deadline.', true);
@@ -557,7 +575,7 @@ ROUTES.account = {
       <section class="panel"><header><h2>My signature</h2>${p.signature_id ? chip('ok', 'Added') : chip('soon', 'Not added')}</header><div class="body">
         <p class="muted">Used when you sign documents in Nest: reports you prepare or sign off, monthly counts, Load-out Manifests and receipts. Under it Nest prints your name, job title and “Signed in GANKCO Nest” with the date and time.</p>
         ${sigBox(await mySigImage(), 'big')}
-        <div class="actionrow mt"><button class="btn primary" id="sigup">${ico('up')}${p.signature_id ? 'Replace signature' : 'Upload signature'}</button>${p.signature_id ? '<button class="btn danger" id="sigrm">Remove</button>' : ''}</div>
+        <div class="actionrow mt"><button class="btn primary" id="sigup">${ico('up')}${p.signature_id ? 'Replace signature' : 'Upload signature'}</button>${p.signature_id ? '<button class="btn" id="sigfit">Adjust size and position</button><button class="btn danger" id="sigrm">Remove</button>' : ''}</div>
         <p class="sub">Tip: sign on plain white paper with a dark pen, then take a straight photo in good light or scan it.</p></div></section>
       ${myAlertsPanel()}
       <section class="panel"><header><h2>About Nest</h2></header><div class="body">
@@ -579,6 +597,7 @@ ROUTES.account = {
     };
     $('#out', main).onclick = () => sb.auth.signOut();
     $('#sigup', main).onclick = () => uploadSignature();
+    const sf = $('#sigfit', main); if (sf) sf.onclick = () => adjustSignature();
     if ($('#sigrm', main)) $('#sigrm', main).onclick = async () => {
       if (!confirm('Remove your signature? Documents you already signed keep it. You’ll need to upload one again before you can sign reports.')) return;
       try { await q(sb.rpc('remove_signature', { p_user: null })); S.profile.signature_id = null; toast('Signature removed'); render({ quiet: true }); } catch (e) { toast(niceError(e), true); }
@@ -645,3 +664,26 @@ document.addEventListener('visibilitychange', async () => {
     if (add.length || m.length) { (AUD.fresh ||= new Set()); add.forEach(r => AUD.fresh.add(r.id)); AUD.rows.unshift(...add); AUD.moves.unshift(...m.filter(x => !AUD.moves.some(y => y.id === x.id))); ROUTES.audit.draw(); pulseLive(); toast(`${plural(add.length + m.length, 'change')} while you were away`); }
   } catch (e) { /* the next render catches up */ }
 });
+
+// ---------------------------------------------------------------- 2.8: size and position of my signature on documents
+async function adjustSignature() {
+  const id = S.profile.signature_id; if (!id) return;
+  sigCacheClear(id); const img = (await sigImages([id]))[id]; if (!img) return toast('Couldn’t load your signature.', true);
+  let k = img.scale || 1, dy = img.dy || 0;
+  return modal({ title: 'Adjust your signature', submit: 'Save',
+    sub: 'Make it bigger or smaller, and move it up or down so it sits neatly on “Signed”. This applies to every document Nest signs for you, including purchase orders. Documents already downloaded don’t change.',
+    body: `<div class="sigfit"><div class="sf-sheet"><div class="sf-for">For : GANKCO ENERGY SERVICES</div><div class="sf-area"><img id="sf-img" src="${img.dataUrl}" alt="Your signature"></div><div class="sf-signed">Signed</div></div>
+      <label class="f">Size <span class="sub" id="sf-kv"></span><input type="range" id="sf-k" min="50" max="180" step="5" value="${Math.round(k * 100)}"></label>
+      <label class="f">Up or down <span class="sub" id="sf-dv"></span><input type="range" id="sf-d" min="-8" max="8" step="0.5" value="${dy}"></label>
+      <button type="button" class="btn small" id="sf-reset">Reset</button></div>`,
+    onOpen: d => {
+      const draw = () => { k = +$('#sf-k', d).value / 100; dy = +$('#sf-d', d).value;
+        const im = $('#sf-img', d); im.style.height = (13 * k * 3.2) + 'px'; im.style.transform = `translate(-50%, ${dy * 3.2}px)`;
+        $('#sf-kv', d).textContent = Math.round(k * 100) + '%'; $('#sf-dv', d).textContent = dy === 0 ? 'centred on Signed' : dy < 0 ? `${Math.abs(dy)} mm higher` : `${dy} mm lower`; };
+      $('#sf-k', d).oninput = draw; $('#sf-d', d).oninput = draw;
+      $('#sf-reset', d).onclick = () => { $('#sf-k', d).value = 100; $('#sf-d', d).value = 0; draw(); };
+      draw();
+    },
+    onSubmit: async () => { await q(sb.rpc('set_signature_fit', { p_scale: k, p_dy: dy })); sigCacheClear(id); toast('Signature size saved'); }
+  });
+}

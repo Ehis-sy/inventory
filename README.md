@@ -1,4 +1,4 @@
-# GANKCO Nest: version 2.7 update
+# GANKCO Nest: version 2.8 update
 
 *Built to support engineered solutions.*
 
@@ -8,6 +8,47 @@
 - **Database and sign-in:** Supabase project in the **GANKCO Energy Services** organization (Nest Gmail; Ehis also an Owner).
 - **Emails:** sent by Brevo from **nest-alerts@gankcoenergy.com** as "GANKCO Nest". Sign-in emails use Supabase's custom SMTP (templates in Supabase → Authentication → Emails → Templates). Alert emails use the Brevo API key saved in Supabase Vault as `brevo_api_key`, on a schedule (pg_cron).
 - **DNS (company IT):** `nest` CNAME → `gankco-energy.github.io`, plus the Brevo verification records.
+
+## Install 2.8 (about 10 minutes)
+
+1. **Lock Nest:** **Nest admin → Nest settings → Maintenance → Schedule maintenance → All of Nest → Start now**. (Before you upload 2.8, this is still **Settings → Maintenance** in Inventory.)
+2. **Supabase → SQL Editor → New query:** paste all of **`11-nest-v2.8-upgrade.sql`** and press **Run**. It should end with **Nest 2.8 installed**. It's safe to run again.
+3. **GitHub:** unzip **`gankco-nest-v2.8.zip`** and upload everything into **github.com/gankco-energy/gankco-nest**, then commit. Keep the `CNAME` file.
+4. Reload Nest (**Ctrl + Shift + R**).
+5. **Check, as the Super Admin:**
+   - **Nest admin → Team & access:** the new **Apps** column. Everyone keeps the apps they had; untick **Inventory** or **Purchase Order** for anyone who shouldn't use it.
+   - **Nest admin → Nest settings → Company details:** the company name and both addresses (they moved here from PO settings).
+   - **My account → Adjust size and position** for your signature.
+6. Press **End maintenance**.
+
+### What's new in 2.8
+
+**Nest admin and app access**
+- **Nest admin** (button on the Nest home screen, and at the bottom of every app's menu): Team & access, Audit log, and **Nest settings** (company details, alert emails, maintenance, backups).
+- **Each app has its own settings:** **Inventory settings** (count dates, warnings, form details) in Inventory, **PO settings** (numbering, service lines) in the Purchase Order app.
+- **Apps per person:** tick **Inventory** and/or **Purchase Order** on the Team page, and when approving a new sign-up. The database enforces it: without Inventory, a person can't open it or read its data, even by typing the address. In the PO app they can still pick Inventory items onto a PO (code, name and unit only). Management only sees the apps they're ticked for. Alert emails leave out apps a person doesn't have.
+
+**Purchase orders**
+- **Required before Sign & issue:** service line, sub service line, supplier name, phone and address (marked with a red asterisk). Drafts can still be saved incomplete.
+- **Phone and Fax** are separate boxes (on the PO and in Suppliers). The PO prints `: 713-433-2277      Fax: 713-433-2443`. The saved suppliers were cleaned up.
+- **Lines:** drag the ⋮⋮ handle to move a line or heading; **Remove** on every row; ↑ ↓ still work on phones.
+- **Several supplier quotes on one PO:** choose them together in **Read a supplier quote**. Their lines are added to the same PO, every file is kept, and all the quote numbers go into the quote ref. Tick **Put each quote's lines under its own heading** only if you want headings.
+- **The PO documents now match the company's POs:** S.No. runs on across headings, dates print as 18/08/2025, totals as USD 172,863.65, the amount in words reads "…Dollars, Sixty Five Cents", only the signature sits on "Signed" (no name or title), and the PDF shows when it was generated at the top left and the page (1/2) at the bottom right.
+- **File names:** *Purchase Order GES-WI-PO-10038-2026 Thru Tubing Systems Inc QN 092624-01JH, 030325-01JH* (drafts say DRAFT).
+- **Delete drafts** from the PO list: the bin on each draft, or tick several and delete them together. Deleting is complete (lines and files too) and uses no number; the Audit log keeps one line.
+- **Statuses:** Draft, Issued, Partly received, Fully received, **Closed**, Cancelled, plus a **Late** filter. **Close PO** (with a reason) when nothing more will come; it clears On order.
+- **Deliveries:** the person who raised a PO gets a bell alert when goods are received; the daily email lists POs past their delivery date with nothing received; the **Overview** shows late and due-this-week deliveries; lines that aren't Inventory items (services, crating) can be marked received by the person who raised the PO.
+- **Revisions:** Nest lists what changed (lines added or removed, quantity and price changes, total before and after) and sends it to the Super Admin, the raiser and the people who receive that line's goods. **Compare versions** shows any two versions side by side.
+- **Add old POs in bulk:** choose up to 20 PDFs or Excel files (8 MB each). Nest reads the PO number, date, supplier, total and lines from each; check the table and add them. Each original file is kept with its PO.
+- **Overview** (first page of the PO app): spend by month, service line, sub service line and supplier, each currency on its own; and **Items bought most**, with last, lowest and highest price, to spot price rises and items worth buying in bulk.
+
+**Signatures**
+- Blank edges and stray marks around every signature are trimmed automatically.
+- **My account → Adjust size and position:** make your signature bigger or smaller and move it up or down, with a preview. It applies on every document Nest signs for you.
+
+---
+
+# Earlier: version 2.7 update
 
 ## Install 2.7 (about 10 minutes)
 

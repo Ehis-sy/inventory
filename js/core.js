@@ -65,6 +65,9 @@ const placeholderLoc = () => S.locs.find(l => l.is_placeholder);
 const realLocs = () => S.locs.filter(l => l.active && !l.is_placeholder);
 const personName = (id, fallback = '') => { const p = S.people[id]; return p ? (p.full_name || p.email) : fallback; };
 const setting = (k, d) => S.settings[k] ?? d;
+// 2.8: which apps a person can open (the Super Admin always has all of them)
+const appAllowed = app => realSuper() || (S.profile?.apps || []).includes(app);
+const ADMIN_ROUTES = ['team', 'audit', 'settings'];
 
 // "View as" is read-only: block every write while it's on
 const VIEW_MSG = 'You’re viewing Nest as another role, so changes are switched off. Press Exit on the orange bar to make changes.';
@@ -477,13 +480,14 @@ function canSignReport(r) {
 
 function navItems() {
   if (S.shellApp === 'po' && typeof poNav === 'function') return poNav();
+  if (S.shellApp === 'admin') return { main: [...(isAdmin() ? [['team', 'Team & access', 'users'], ['audit', 'Audit log', 'audit']] : []), ...(isSuper() ? [['settings', 'Nest settings', 'gear']] : []), ['account', 'My account', 'user']],
+    setup: [...(appAllowed('inventory') ? [['dashboard', 'Inventory', 'box']] : []), ...(appAllowed('po') ? [['po/overview', 'Purchase Order', 'audit']] : [])] };
   const main = [['dashboard', 'Overview', 'home'], ['inventory', 'Inventory', 'box'], ['scan', 'Scan', 'scan'],
     ['jobs', 'Materials requests', 'truck'], ['planner', 'Job planner', 'plan'], ['checkouts', 'Out on jobs', 'out'], ['count', 'Monthly count', 'count'],
     ['certs', 'Certificates & kits', 'cert'], ['reports', 'Reports', 'chart'], ['signoffs', 'Sign-offs', 'sign'], ['activity', 'Activity', 'clock'],
     ['approvals', isAdmin() ? 'Approvals' : 'My requests', 'check']];
   if (isMgmt()) return { main: main.filter(([r]) => ['dashboard', 'inventory', 'planner', 'reports', 'signoffs'].includes(r)), setup: [] };
-  const setup = isAdmin() ? [['locations', 'Locations', 'pin'], ['team', 'Team', 'users'], ['labels', 'Labels', 'label'], ['audit', 'Audit log', 'audit'],
-    ...(isSuper() ? [['settings', 'Settings', 'gear']] : [])] : [];
+  const setup = isAdmin() ? [['locations', 'Locations', 'pin'], ['labels', 'Labels', 'label'], ...(isSuper() ? [['invsettings', 'Inventory settings', 'gear']] : []), ['team', 'Nest admin', 'users']] : [];
   return { main, setup };
 }
 
@@ -494,10 +498,10 @@ function shell() {
   $('#app').innerHTML = `<div class="shell">
     <aside class="side">
       <a class="brand" href="#/"><img src="brand/mark-96.png" alt="">
-        <span class="brand-name">${wordmark()}<small>Nest · ${S.shellApp === 'po' ? 'Purchasing' : 'Inventory'}</small></span></a>
+        <span class="brand-name">${wordmark()}<small>Nest · ${S.shellApp === 'po' ? 'Purchasing' : S.shellApp === 'admin' ? 'Admin' : 'Inventory'}</small></span></a>
       <a class="apps-link" href="#/">${ico('grid')}All apps</a>
       <nav class="nav">${main.map(link).join('')}
-        ${setup.length ? `<div class="nav-group">Setup</div>${setup.map(link).join('')}` : ''}</nav>
+        ${setup.length ? `<div class="nav-group">${S.shellApp === 'admin' ? 'Apps' : 'Setup'}</div>${setup.map(link).join('')}` : ''}</nav>
       <div class="side-foot">${CFG.TAGLINE ? `<div class="motto">${esc(CFG.TAGLINE)}</div>` : ''}
         <a class="who" href="#/account">${esc(p.full_name || p.email)}</a><div class="role">${ROLE_LABEL[role()]}${!isSuper() && !isMgmt() ? ' · ' + esc(myLineIds().map(lineShort).join(', ') || 'no service line') : ''}</div>
         ${realSuper() ? `<button class="btn small viewas-btn" id="viewas">${S.viewAs ? 'Change view' : 'View as…'}</button>` : ''}
@@ -505,7 +509,9 @@ function shell() {
     </aside>${viewAsBar()}
     <main id="main"></main>
     <button class="bell" id="bell" aria-label="Notifications">${ico('bell')}<span class="bell-count" hidden></span></button>
-    ${S.shellApp === 'po' && typeof poBottomBar === 'function' ? poBottomBar() : `<nav class="bottombar">
+    ${S.shellApp === 'po' && typeof poBottomBar === 'function' ? poBottomBar() : S.shellApp === 'admin' ? `<nav class="bottombar">
+      ${isAdmin() ? `<a href="#/team" data-r="team">${ico('users')}Team</a><a href="#/audit" data-r="audit">${ico('audit')}Audit</a>` : ''}${isSuper() ? `<a href="#/settings" data-r="settings">${ico('gear')}Settings</a>` : ''}
+      <a href="#/account" data-r="account">${ico('user')}Account</a><a href="#/" data-r="home">${ico('grid')}Apps</a></nav>` : `<nav class="bottombar">
       <a href="#/dashboard" data-r="dashboard">${ico('home')}Overview</a>
       <a href="#/inventory" data-r="inventory">${ico('box')}Inventory</a>
       <a href="#/scan" data-r="scan" class="scan"><span class="disc">${ico('scan')}</span>Scan</a>
@@ -521,6 +527,7 @@ function shell() {
 function setNav(r) { $$('[data-r]').forEach(a => a.classList.toggle('on', a.dataset.r === r)); }
 
 const ROUTES = {};
+ROUTES.noapp = { load: async () => topbar('Inventory') + `<div class="notice">You don’t have access to the Inventory app. Ask your admin if you need it.</div><a class="btn" href="#/">Back to Nest home</a>` };
 let renderSeq = 0;
 async function render(opts = {}) {
   if (!S.session || !isActive()) return;
@@ -530,10 +537,12 @@ async function render(opts = {}) {
   if (typeof maintGate === 'function' && maintGate(r)) return;
   if (r === '' || r === 'home') { S.shellReady = false; return renderLauncher(); }
   if (S.inv.edit && r !== 'inventory') { S.inv.edit = false; S.inv.changes.clear(); }
-  const app = r === 'po' ? 'po' : 'inventory';
+  const app = r === 'po' ? 'po' : ADMIN_ROUTES.includes(r) ? 'admin' : r === 'account' ? (S.shellApp || 'admin') : 'inventory';
   if (S.shellApp !== app) { S.shellApp = app; S.shellReady = false; }
   shell();
-  const view = ROUTES[r] || ROUTES.dashboard;
+  // 2.8: an app someone doesn't have can't be opened, even by typing its address
+  const blocked = app === 'inventory' && !appAllowed('inventory');
+  const view = blocked ? ROUTES.noapp : (ROUTES[r] || ROUTES.dashboard);
   setNav(r === 'item' ? 'inventory' : r === 'job' ? 'jobs' : r === 'po' ? (parts[1] && isNaN(+parts[1]) ? 'po/' + parts[1] : 'po') : r);
   const main = $('#main'); const seq = ++renderSeq;
   const y = window.scrollY;
@@ -579,14 +588,14 @@ async function renderLauncher() {
   const apps = p.apps || ['inventory'];
   $('#app').innerHTML = `${viewAsBar()}<div class="launcher">${typeof maintBars === 'function' ? maintBars('launcher') : ''}
     <header class="l-top"><a class="brand" href="#/"><img src="brand/mark-96.png" alt=""><span class="brand-name">${wordmark()}<small>Nest</small></span></a>
-      <div class="l-right">${isAdmin() ? `<a class="btn small ghost" href="#/team">${ico('users')}Team &amp; access</a>` : ''}${realSuper() ? `<button class="btn small ghost" id="viewas">${S.viewAs ? 'Change view' : 'View as…'}</button>` : ''}<button class="bell inline" id="bell" aria-label="Notifications">${ico('bell')}<span class="bell-count" hidden></span></button>
+      <div class="l-right">${isAdmin() ? `<a class="btn small ghost" href="#/team">${ico('gear')}Nest admin</a>` : ''}${realSuper() ? `<button class="btn small ghost" id="viewas">${S.viewAs ? 'Change view' : 'View as…'}</button>` : ''}<button class="bell inline" id="bell" aria-label="Notifications">${ico('bell')}<span class="bell-count" hidden></span></button>
       <a class="btn small ghost" href="#/account">${esc(p.full_name || p.email)}</a><button class="btn small ghost" id="out">Sign out</button></div></header>
     <section class="l-hero"><img class="l-mark" src="brand/mark.png" alt="">
       <div><div class="l-tag">${esc(CFG.TAGLINE || '')}</div><h1>${first ? `Welcome back, ${esc(first)}` : 'Welcome'}</h1>
       <p>Where would you like to go?</p></div></section>
     <section class="tiles">
-      ${apps.includes('inventory') ? appTile('inventory', '#/dashboard', 'box', 'Inventory', 'Equipment, stock, materials requests, monthly counts and reports.', '<span class="t-meta" id="invMeta">Open</span>', true) : ''}
-      ${typeof poCanView === 'function' && poCanView() ? appTile('po', '#/po', 'audit', 'Purchase Order', 'Raise, sign and track purchase orders to OEMs and suppliers.', '<span class="t-meta" id="poMeta">Open</span>', true) : appTile('po', null, 'audit', 'Purchase Order', 'Raise and track purchase orders to OEMs and suppliers.', '<span class="t-meta">Ask the Super Admin for access</span>')}
+      ${appAllowed('inventory') ? appTile('inventory', '#/dashboard', 'box', 'Inventory', 'Equipment, stock, materials requests, monthly counts and reports.', '<span class="t-meta" id="invMeta">Open</span>', true) : ''}
+      ${typeof poCanView === 'function' && poCanView() ? appTile('po', '#/po/overview', 'audit', 'Purchase Order', 'Raise, sign and track purchase orders to OEMs and suppliers.', '<span class="t-meta" id="poMeta">Open</span>', true) : appTile('po', null, 'audit', 'Purchase Order', 'Raise and track purchase orders to OEMs and suppliers.', '<span class="t-meta">Ask the Super Admin for access</span>')}
       ${appTile('proforma', null, 'chart', 'Proforma Invoice &amp; Quote', 'Prepare quotes and proforma invoices for clients.', '<span class="t-meta">Coming later</span>')}
     </section>
     <footer class="l-foot">${esc(CFG.COMPANY || '')} · ${esc(CFG.MOTTO || '')}<br><span>${esc(CFG.APP_NAME)} v${esc(CFG.VERSION || '')} · <span class="credit">${esc(CREDIT)}</span></span></footer></div>`;

@@ -256,13 +256,31 @@ async function pdfFrame(doc, { title, subtitle, draft }) {
   };
 }
 
-// Signature images by id (cached)
+// Signature images by id (cached). 2.8: blank edges and stray specks are trimmed, and each person's size and position are applied.
 const _sigCache = {};
+async function trimSignature(dataUrl) {
+  const img = await new Promise((res, rej) => { const i = new Image(); i.onload = () => res(i); i.onerror = rej; i.src = dataUrl; });
+  const w = img.naturalWidth, h = img.naturalHeight; if (!w || !h) return { dataUrl, w, h };
+  const c = document.createElement('canvas'); c.width = w; c.height = h; const x = c.getContext('2d', { willReadFrequently: true }); x.drawImage(img, 0, 0);
+  const p = x.getImageData(0, 0, w, h).data; const col = new Float64Array(w), row = new Float64Array(h); let tot = 0;
+  for (let yy = 0; yy < h; yy++) for (let xx = 0; xx < w; xx++) { const i = (yy * w + xx) * 4; const L = p[i] * .299 + p[i + 1] * .587 + p[i + 2] * .114;
+    const ink = p[i + 3] > 40 && L < 235 ? p[i + 3] / 255 : 0; if (ink) { col[xx] += ink; row[yy] += ink; tot += ink; } }
+  if (!tot) return { dataUrl, w, h };
+  // keep 99.4% of the ink: drops specks and dots far from the signature
+  const cut = (arr) => { let a = 0, lo = 0, hi = arr.length - 1, s = 0; for (; lo < arr.length; lo++) { s += arr[lo]; if (s > tot * .003) break; } s = 0; for (; hi > 0; hi--) { s += arr[hi]; if (s > tot * .003) break; } return [lo, hi]; };
+  const [x0, x1] = cut(col), [y0, y1] = cut(row); const pad = 3;
+  const sx = Math.max(0, x0 - pad), sy = Math.max(0, y0 - pad), cw = Math.min(w - 1, x1 + pad) - sx + 1, ch = Math.min(h - 1, y1 + pad) - sy + 1;
+  if (cw < 8 || ch < 4 || (cw >= w - 2 && ch >= h - 2)) return { dataUrl, w, h };
+  const o = document.createElement('canvas'); o.width = cw; o.height = ch; o.getContext('2d').drawImage(c, sx, sy, cw, ch, 0, 0, cw, ch);
+  return { dataUrl: o.toDataURL('image/png'), w: cw, h: ch };
+}
+function sigCacheClear(id) { if (id) delete _sigCache[id]; else Object.keys(_sigCache).forEach(k => delete _sigCache[k]); }
 async function sigImages(ids) {
   const need = [...new Set(ids.filter(id => id && !_sigCache[id]))];
   if (need.length) {
-    const rows = await q(sb.from('signatures').select('id,image').in('id', need)).catch(() => []);
-    for (const r of rows) { try { _sigCache[r.id] = await dataImage(r.image); } catch (e) { /* skip broken image */ } }
+    let rows = await q(sb.from('signatures').select('id,image,fit_scale,fit_dy').in('id', need)).catch(() => null);
+    if (!rows) rows = await q(sb.from('signatures').select('id,image').in('id', need)).catch(() => []);
+    for (const r of rows) { try { const t = await trimSignature(r.image); _sigCache[r.id] = { ...t, scale: +r.fit_scale || 1, dy: +r.fit_dy || 0 }; } catch (e) { /* skip broken image */ } }
   }
   return Object.fromEntries(ids.filter(id => _sigCache[id]).map(id => [id, _sigCache[id]]));
 }
@@ -293,9 +311,9 @@ function drawSignatures(doc, signatures, y, imgs) {
     doc.text(pdfText(String(s.label || '').toUpperCase()), x, y, { charSpace: .4, maxWidth: sw });
     const img = s.sigId && imgs[s.sigId];
     if (img) {
-      const maxH = 13, maxW = Math.min(sw * .7, 55); let h = maxH, w = h * img.w / img.h;
+      const k = img.scale || 1, maxH = 13 * k, maxW = Math.min(sw * .9, 55 * k); let h = maxH, w = h * img.w / img.h;
       if (w > maxW) { w = maxW; h = w * img.h / img.w; }
-      doc.addImage(img.dataUrl, 'PNG', x, y + 2 + (maxH - h), w, h, 'sig-' + s.sigId, 'FAST');
+      doc.addImage(img.dataUrl, 'PNG', x, y + 2 + (13 - h) + (img.dy || 0), w, h, 'sig-' + s.sigId, 'FAST');
     }
     doc.setDrawColor(...rgb(PDF_INK.ink)); doc.setLineWidth(.25); doc.line(x, y + 16, x + sw, y + 16);
     doc.setFont('Barlow', 'normal'); doc.setFontSize(9.5); doc.setTextColor(...rgb(PDF_INK.ink));
