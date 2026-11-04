@@ -1,4 +1,4 @@
-# GANKCO Nest: version 2.8 update
+# GANKCO Nest: version 2.8.1 update
 
 *Built to support engineered solutions.*
 
@@ -9,7 +9,45 @@
 - **Emails:** sent by Brevo from **nest-alerts@gankcoenergy.com** as "GANKCO Nest". Sign-in emails use Supabase's custom SMTP (templates in Supabase → Authentication → Emails → Templates). Alert emails use the Brevo API key saved in Supabase Vault as `brevo_api_key`, on a schedule (pg_cron).
 - **DNS (company IT):** `nest` CNAME → `gankco-energy.github.io`, plus the Brevo verification records.
 
-## Install 2.8 (about 10 minutes)
+## Install 2.8.1 (about 5 minutes)
+
+1. **Lock Nest:** **Nest admin → Nest settings → Maintenance → Schedule maintenance → All of Nest → Start now**.
+2. **Supabase → SQL Editor → New query:** paste all of **`13-nest-v2.8.1-upgrade.sql`** and press **Run**. It should end with **Nest 2.8.1 installed**. It's safe to run again. (It already contains the 2.8.1 security fix, so it doesn't matter whether `12-nest-v2.8.1-security-fix.sql` was run first.)
+3. **GitHub:** unzip **`gankco-nest-v2.8.1.zip`** and upload everything into **github.com/gankco-energy/gankco-nest**, then commit. Keep the `CNAME` file.
+4. Reload Nest (**Ctrl + Shift + R**). The version at the bottom of each page shows v2.8.1.
+5. **Check:** Purchase Order → Purchase orders → **All**: drafts on top, then 10038 onwards newest first, then the old POs by date. Suppliers: the suppliers from old POs are there with their details.
+6. **Supabase → Advisors:** refresh **Performance Advisor** (the 20 warnings should be gone) and **Security Advisor** (only the expected warnings stay: see below).
+7. Press **End maintenance**.
+
+### What's new in 2.8.1
+
+**PO list**
+- **Order:** drafts first (the one edited last on top), then POs issued in Nest by PO number (newest on top), then old POs added from before Nest by PO date (newest on top). Every filter and the Excel download use this order.
+- **Click a column heading to sort** by it (PO number, PO date, supplier, service line, delivery, order amount, status, raised by). Press again to reverse, a third time for the default order, or **Back to the default order**. POs without a value (such as drafts without a number) always go to the bottom. On a phone there's an **order** picker under the filters. The Excel download follows the order on screen and says how it was sorted.
+
+**Suppliers from old POs**
+- When an old PO is added (one by one or in bulk) and its supplier isn't in the Suppliers list, the supplier is added with its **address, phone and fax**. A "Phone: … Fax: …" written together is split into the two boxes.
+- If the supplier is already in the list, Nest **only fills in details it's missing**; nothing already saved is replaced.
+- The old POs already in Nest were run through the same check when you installed 2.8.1.
+- **Add one by hand** now has optional address, phone and fax boxes, and says whether the supplier is new or already in the list.
+
+**Security and speed (Supabase advisors)**
+- The 2.8.1 security fix is part of the upgrade: only signed-in people can call Nest's functions, Nest's internal helpers can't be called directly, and signed-out visitors can only read the maintenance notice on the sign-in page.
+- The database's security rules were made faster without changing who can do what:
+  - the "who is signed in" check runs once per request instead of once per row;
+  - each table has separate rules for adding, changing and deleting instead of one catch-all rule;
+  - every link between tables has an index.
+- Checked by comparing, for every test user and every table, what they could read, change and delete before and after: identical.
+
+**Security Advisor: warnings that are expected and stay**
+- *Signed-in users can execute security definer function* (about 96): by design. Each one is a Nest button or a yes/no check the security rules use, and each checks the person's role inside.
+- *anon can execute maint_public*: by design (the sign-in page maintenance notice).
+- *Leaked password protection*: a switch in Supabase → Authentication (it may need a paid plan). Turn it on if your plan allows.
+- **Performance Advisor "Unused index" (info):** normal while tables are small; Postgres reads small tables directly. Leave them.
+
+
+
+## Installing 2.8 (for reference: already done)
 
 1. **Lock Nest:** **Nest admin → Nest settings → Maintenance → Schedule maintenance → All of Nest → Start now**. (Before you upload 2.8, this is still **Settings → Maintenance** in Inventory.)
 2. **Supabase → SQL Editor → New query:** paste all of **`11-nest-v2.8-upgrade.sql`** and press **Run**. It should end with **Nest 2.8 installed**. It's safe to run again.

@@ -979,3 +979,17 @@ dialog.modal.bulkimp { width: min(1280px, 96vw); max-width: 96vw; }
 #bi-out input[type=date] { min-width: 140px; }
 #bi-out select { min-width: 92px; }
 table.cv td:first-child { white-space: nowrap; }
+
+/* 2.8.1 · PO list: sortable column headings */
+.t th.sortable { padding: 0; }
+.t th.sortable .thsort { display: flex; align-items: center; gap: 4px; width: 100%; padding: 9px 12px; background: none; border: 0; font: inherit; color: inherit; cursor: pointer; text-align: left; white-space: nowrap; }
+.t th.sortable.num .thsort { justify-content: flex-end; }
+.t th.sortable .thsort:hover { color: var(--ink); background: #EEF2F4; }
+.t th.sortable .thsort:focus-visible { outline: 2px solid var(--brand); outline-offset: -2px; }
+.t th.sortable.on .thsort { color: var(--ink); }
+.t th.sortable .arr { display: inline-block; min-width: 10px; font-size: 12px; color: var(--brand-deep); }
+.sortnote { padding: 8px 16px; font-size: 13px; color: var(--muted); border-bottom: 1px solid var(--line); background: #FAFAFB; }
+.sortnote b { color: var(--ink); font-weight: 600; }
+.sortnote .linkbtn { margin-left: 6px; font-size: 13px; color: var(--brand-deep); }
+.po-filters .po-msort { display: none; }
+@media (max-width: 760px) { .po-filters .po-msort { display: block; max-width: none; flex: 1 1 100%; } }

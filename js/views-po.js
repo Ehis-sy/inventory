@@ -16,7 +16,43 @@ const poSubs = major => S.po.lines.filter(l => l.parent_id === +major).sort((a, 
 const poLineLabel = o => [poLineCode(o.line_id), o.sub_line_id ? poLineName(o.sub_line_id) : poLineName(o.line_id)].filter(Boolean).join(' · ');
 const poSettings = () => setting('po', {}) || {};
 const poOfficeLabel = k => k ? (poSettings().offices?.[k]?.label || k) : 'Left blank';
-S.po = { lines: [], suppliers: [], terms: [], at: 0, f: { q: '', status: 'open', line: '', sub: '', sup: '', year: '', cur: '' } };
+S.po = { lines: [], suppliers: [], terms: [], at: 0, f: { q: '', status: 'open', line: '', sub: '', sup: '', year: '', cur: '', sk: '', sd: '' } };
+
+// ---------------------------------------------------------------- PO list order
+// Default: drafts first (last edited on top), then POs issued in Nest by number (newest on top),
+// then old POs added from before Nest by PO date (newest on top).
+const poGroup = o => o.status === 'draft' && !o.po_no ? 0 : o.is_import ? 2 : 1;
+const poNumOf = o => { if (o.seq != null) return +o.seq; const m = String(o.po_no || '').match(/-PO-(\d+)-/); return m ? +m[1] : null; };
+const poCmp = (x, y) => x < y ? -1 : x > y ? 1 : 0;
+function poDefaultOrder(a, b) {
+  const g = poGroup(a) - poGroup(b); if (g) return g;
+  if (poGroup(a) === 0) return poCmp(String(b.updated_at || b.created_at || ''), String(a.updated_at || a.created_at || ''));
+  if (poGroup(a) === 1) return (poNumOf(b) ?? -1) - (poNumOf(a) ?? -1) || (b.revision || 0) - (a.revision || 0) || b.id - a.id;
+  return poCmp(String(b.po_date || ''), String(a.po_date || '')) || poCmp(String(b.po_no || ''), String(a.po_no || '')) || b.id - a.id;
+}
+const poSortWord = k => PO_SORT[k][0].replace(/^(?!PO\b)\w/, m => m.toLowerCase());
+const PO_STATUS_ORDER = ['draft', 'issued', 'partial', 'received', 'closed', 'cancelled'];
+// column: [label, sort value, first-click direction, words for the order]
+const PO_SORT = {
+  no:   ['PO number', o => poNumOf(o) ?? (o.po_no || null), 'desc', ['lowest first', 'highest first']],
+  date: ['PO date', o => o.po_date || null, 'desc', ['oldest first', 'newest first']],
+  sup:  ['Supplier', o => (o.supplier_name || '').trim().toLowerCase() || null, 'asc', ['A to Z', 'Z to A']],
+  line: ['Service line', o => `${poLineCode(o.line_id)} ${o.sub_line_id ? poLineName(o.sub_line_id) : ''}`.trim().toLowerCase() || null, 'asc', ['A to Z', 'Z to A']],
+  del:  ['Delivery', o => o.delivery_date || null, 'asc', ['soonest first', 'latest first']],
+  tot:  ['Order amount', o => +o.total || 0, 'desc', ['smallest first', 'largest first']],
+  st:   ['Status', o => PO_STATUS_ORDER.indexOf(o.status), 'asc', ['draft to cancelled', 'cancelled to draft']],
+  by:   ['Raised by', o => (o.created_by_name || '').trim().toLowerCase() || null, 'asc', ['A to Z', 'Z to A']]
+};
+function poSortRows(rows) {
+  const f = S.po.f, col = PO_SORT[f.sk];
+  if (!col) return rows.slice().sort(poDefaultOrder);
+  const dir = f.sd === 'asc' ? 1 : -1;
+  return rows.slice().sort((a, b) => {
+    const x = col[1](a), y = col[1](b), ex = x == null || x === '', ey = y == null || y === '';
+    if (ex || ey) return ex === ey ? poDefaultOrder(a, b) : ex ? 1 : -1;   // blanks always at the bottom
+    return (typeof x === typeof y ? poCmp(x, y) : poCmp(String(x), String(y))) * dir || poDefaultOrder(a, b);
+  });
+}
 
 async function poLookups(force) {
   if (!force && S.po.at && Date.now() - S.po.at < 60000) return S.po;
@@ -77,7 +113,7 @@ const poList = {
   async load(params) {
     if (params?.get('v') === 'late') { S.po.f.status = 'late'; history.replaceState(null, '', '#/po'); }
     this.sel = new Set();
-    this.rows = await q(sb.from('po_orders').select('id,po_no,revision,title,status,revising,line_id,sub_line_id,supplier_name,po_date,delivery_date,currency,total,created_by,created_by_name,created_at,issued_at,is_import,source,quote_ref')
+    this.rows = await q(sb.from('po_orders').select('id,po_no,seq,revision,title,status,revising,line_id,sub_line_id,supplier_name,po_date,delivery_date,currency,total,created_by,created_by_name,created_at,updated_at,issued_at,is_import,source,quote_ref')
       .order('created_at', { ascending: false }).limit(3000));
     const yr = String(new Date().getFullYear());
     const issued = this.rows.filter(o => !['draft', 'cancelled'].includes(o.status));
@@ -102,9 +138,10 @@ const poList = {
         <select id="po-sub" ${f.line ? '' : 'disabled'}><option value="">All sub lines</option>${f.line ? poSubs(f.line).map(l => opt(l.id, l.name, f.sub)).join('') : ''}</select>
         <select id="po-sup"><option value="">All suppliers</option>${[...new Set(this.rows.map(o => o.supplier_name).filter(Boolean))].sort().map(n => opt(n, n, f.sup)).join('')}</select>
         <select id="po-year"><option value="">All years</option>${years.map(y => opt(y, y, f.year)).join('')}</select>
-        <select id="po-cur"><option value="">All currencies</option>${Object.keys(PO_CUR).map(c => opt(c, c, f.cur)).join('')}</select></div>
-        <div id="po-bulk"></div>
-        <div class="tablewrap"><table class="t stack potable"><thead><tr><th class="c-sel"></th><th>PO number</th><th>PO date</th><th>Supplier</th><th>Service line</th><th>Delivery</th><th class="num">Order amount</th><th>Status</th><th>Raised by</th></tr></thead><tbody id="po-body"></tbody>
+        <select id="po-cur"><option value="">All currencies</option>${Object.keys(PO_CUR).map(c => opt(c, c, f.cur)).join('')}</select>
+        <select id="po-msort" class="po-msort" aria-label="Order">${this.sortOptions()}</select></div>
+        <div id="po-bulk"></div><div id="po-sortnote"></div>
+        <div class="tablewrap"><table class="t stack potable"><thead><tr><th class="c-sel"></th>${Object.entries(PO_SORT).map(([k, c]) => `<th data-sk="${k}" class="sortable${k === 'tot' ? ' num' : ''}"><button type="button" class="thsort" title="Sort by ${poSortWord(k)}">${c[0]}<span class="arr" aria-hidden="true"></span></button></th>`).join('')}</tr></thead><tbody id="po-body"></tbody>
         <tfoot id="po-foot"></tfoot></table></div></section>`;
   },
   filtered() {
@@ -121,8 +158,25 @@ const poList = {
       return true;
     });
   },
+  sorted() { return poSortRows(this.filtered()); },
+  sortOptions() {
+    const f = S.po.f, cur = f.sk ? `${f.sk}:${f.sd}` : '';
+    return [['', 'Default order (newest first)'], ...['no', 'date', 'sup', 'del', 'tot', 'st', 'by'].flatMap(k => { const c = PO_SORT[k];
+      const both = [['asc', c[3][0]], ['desc', c[3][1]]]; if (c[2] === 'desc') both.reverse(); return both.map(([d, w]) => [`${k}:${d}`, `${c[0]}: ${w}`]); })]
+      .map(([v, l]) => opt(v, l, cur)).join('');
+  },
+  drawSort(main) {
+    const f = S.po.f, col = PO_SORT[f.sk];
+    $$('th[data-sk]', main).forEach(th => { const on = th.dataset.sk === f.sk; th.classList.toggle('on', on);
+      th.setAttribute('aria-sort', on ? (f.sd === 'asc' ? 'ascending' : 'descending') : 'none');
+      $('.arr', th).textContent = on ? (f.sd === 'asc' ? '↑' : '↓') : ''; });
+    const ms = $('#po-msort', main); if (ms) ms.value = f.sk ? `${f.sk}:${f.sd}` : '';
+    $('#po-sortnote', main).innerHTML = col ? `<div class="sortnote">Sorted by <b>${esc(poSortWord(f.sk))}</b>, ${esc(col[3][f.sd === 'asc' ? 0 : 1])}. <button type="button" class="linkbtn" id="po-sortreset">Back to the default order</button></div>` : '';
+    const r = $('#po-sortreset', main); if (r) r.onclick = () => { f.sk = ''; f.sd = ''; this.draw(main); };
+  },
   draw(main) {
-    const rows = this.filtered();
+    const rows = this.sorted();
+    this.drawSort(main);
     $('#po-body', main).innerHTML = rows.length ? rows.map(o => {
       const late = ['issued', 'partial'].includes(o.status) && o.delivery_date && o.delivery_date < localISO(0);
       const del = o.status === 'draft' && !o.po_no && poOwner(o) && poCanRaise();
@@ -165,13 +219,20 @@ const poList = {
     $('#po-sup', main).onchange = e => { f.sup = e.target.value; redraw(); };
     $('#po-year', main).onchange = e => { f.year = e.target.value; redraw(); };
     $('#po-cur', main).onchange = e => { f.cur = e.target.value; redraw(); };
+    // column headings sort: first press uses the natural order for that column, the second flips it, the third goes back to the default
+    $$('th[data-sk] .thsort', main).forEach(b => b.onclick = () => {
+      const k = b.parentNode.dataset.sk, first = PO_SORT[k][2];
+      if (f.sk !== k) { f.sk = k; f.sd = first; } else if (f.sd === first) f.sd = first === 'asc' ? 'desc' : 'asc'; else { f.sk = ''; f.sd = ''; }
+      redraw();
+    });
+    $('#po-msort', main).onchange = e => { const [k, d] = e.target.value.split(':'); f.sk = k || ''; f.sd = d || ''; redraw(); };
     const imp = $('#po-import', main); if (imp) imp.onclick = () => poBulkImport();
     $('#po-xls', main).onclick = () => brandXlsx({ file: `Purchase orders ${localISO(0)}.xlsx`, sheets: [{ name: 'Purchase orders', title: 'Purchase orders',
-      subtitle: `${CFG.COMPANY || ''} · ${plural(this.filtered().length, 'purchase order')}`,
+      subtitle: `${CFG.COMPANY || ''} · ${plural(this.filtered().length, 'purchase order')}${PO_SORT[f.sk] ? ` · sorted by ${poSortWord(f.sk)}, ${PO_SORT[f.sk][3][f.sd === 'asc' ? 0 : 1]}` : ''}`,
       columns: [{ header: 'PO number', key: 'no', width: 26 }, { header: 'PO date', key: 'date', width: 12, type: 'date' }, { header: 'Supplier', key: 'sup', width: 32 },
         { header: 'Service line', key: 'line', width: 8 }, { header: 'Sub service line', key: 'sub', width: 34 }, { header: 'Delivery date', key: 'del', width: 13, type: 'date' },
         { header: 'Currency', key: 'cur', width: 9 }, { header: 'Order amount', key: 'tot', width: 15, type: 'num' }, { header: 'Status', key: 'st', width: 15 }, { header: 'Raised by', key: 'by', width: 20 }],
-      rows: this.filtered().map(o => ({ no: poFull(o) || 'Draft', date: o.po_date, sup: o.supplier_name || '', line: poLineCode(o.line_id), sub: o.sub_line_id ? poLineName(o.sub_line_id) : '',
+      rows: this.sorted().map(o => ({ no: poFull(o) || 'Draft', date: o.po_date, sup: o.supplier_name || '', line: poLineCode(o.line_id), sub: o.sub_line_id ? poLineName(o.sub_line_id) : '',
         del: o.delivery_date, cur: o.currency, tot: +o.total, st: PO_STATUS[o.status]?.[1] + (o.revision ? ` (R${o.revision})` : ''), by: o.created_by_name || '' })) }] });
     redraw();
   }
@@ -860,7 +921,9 @@ async function poImportDialog() {
     sub: 'For POs sent before Nest. They appear in the history and totals, with the original file attached. The running number isn’t affected.',
     body: `<div class="row2"><label class="f">PO number<input type="text" name="po_no" placeholder="GES-WI-PO-10023-2025" required></label><label class="f">P.O. date<input type="date" name="po_date"></label></div>
       <div class="row2"><label class="f">Service line<select name="line_id" id="im-line">${poMajors().map(l => opt(l.id, `${l.code} · ${l.name}`)).join('')}</select></label><label class="f">Sub service line<select name="sub_line_id" id="im-sub"></select></label></div>
-      <label class="f">Supplier<input type="text" name="supplier_name" list="im-sups" required><datalist id="im-sups">${S.po.suppliers.map(s => `<option value="${esc(s.name)}"></option>`).join('')}</datalist></label>
+      <label class="f">Supplier<span class="hint" id="im-suphint">A new supplier is added to your Suppliers list with the details below.</span><input type="text" name="supplier_name" id="im-sup" list="im-sups" required><datalist id="im-sups">${S.po.suppliers.map(s => `<option value="${esc(s.name)}"></option>`).join('')}</datalist></label>
+      <label class="f">Supplier address<span class="hint">Optional.</span><textarea name="supplier_address" rows="2"></textarea></label>
+      <div class="row2"><label class="f">Phone<span class="hint">Optional.</span><input type="text" name="supplier_phone"></label><label class="f">Fax<span class="hint">Optional.</span><input type="text" name="supplier_fax"></label></div>
       <div class="row3"><label class="f">Currency<select name="currency">${Object.keys(PO_CUR).map(c => opt(c, c, 'USD')).join('')}</select></label><label class="f">Order amount<input type="text" name="total" inputmode="decimal" required></label>
         <label class="f">Status<select name="status">${opt('issued', 'Issued (goods still to come)')}${opt('received', 'Received')}${opt('cancelled', 'Cancelled')}</select></label></div>
       <label class="f">Note<input type="text" name="note" placeholder="optional"></label>
@@ -870,11 +933,14 @@ async function poImportDialog() {
       const draw = () => { const s = poSubs(ln.value); sub.innerHTML = `<option value="">${s.length ? 'Choose…' : 'None'}</option>` + s.map(l => opt(l.id, l.name)).join(''); };
       ln.onchange = draw; draw();
       $('#im-file', d).onchange = e => { file = e.target.files[0] || null; };
+      $('#im-sup', d).oninput = e => { const known = S.po.suppliers.find(x => x.name.trim().toLowerCase() === e.target.value.trim().toLowerCase());
+        $('#im-suphint', d).textContent = known ? `${known.name} is already in your Suppliers list. Details you add here only fill in what it’s missing.` : 'A new supplier is added to your Suppliers list with the details below.'; };
       $('[name=po_no]', d).oninput = e => { const m = e.target.value.toUpperCase().match(/^GES-([A-Z]+)-PO-/); if (m) { const l = poMajors().find(x => x.code === m[1]); if (l && +ln.value !== l.id) { ln.value = l.id; draw(); } } };
     },
     onSubmit: async x => {
       if (file && file.size > 8 * 1024 * 1024) throw new Error('That file is too big (the limit is 8 MB).');
-      const p = { po_no: x.po_no, po_date: x.po_date, line_id: x.line_id, sub_line_id: x.sub_line_id, supplier_name: x.supplier_name, currency: x.currency,
+      const p = { po_no: x.po_no, po_date: x.po_date, line_id: x.line_id, sub_line_id: x.sub_line_id, supplier_name: x.supplier_name,
+        supplier_address: x.supplier_address, supplier_phone: x.supplier_phone, supplier_fax: x.supplier_fax, currency: x.currency,
         total: String(x.total || '').replace(/[^0-9.]/g, ''), status: x.status, note: x.note,
         ...(file ? { file: { name: file.name, mime: file.type, data: await fileB64(file) } } : {}) };
       const id = await q(sb.rpc('po_import', { p })); S.po.at = 0; toast('Added to the history'); go('#/po/' + id);
@@ -934,7 +1000,7 @@ function poParseOld(text) {
 async function poBulkImport() {
   let rows = [];
   return modal({ title: 'Add old POs', wide: true, submit: 'Add to the history',
-    sub: 'For POs sent before Nest. Choose the PDFs or Excel files (up to 20 at a time, 8 MB each). Nest reads the PO number, date, supplier, order amount and lines from each one. Check the table, then add them. The running number isn’t affected, and each original file is kept with its PO.',
+    sub: 'For POs sent before Nest. Choose the PDFs or Excel files (up to 20 at a time, 8 MB each). Nest reads the PO number, date, supplier, order amount and lines from each one. Check the table, then add them. The running number isn’t affected, and each original file is kept with its PO. A supplier that isn’t in your list yet is added with its address, phone and fax.',
     body: `<div class="actionrow"><label class="btn tagbtn filebtn">${ico('up')}Choose old PO files<input type="file" id="bi-files" multiple accept=".pdf,.xlsx,.xlsm" hidden></label><button type="button" class="btn" id="bi-hand">Add one by hand instead</button></div><div id="bi-out" class="mt"></div>`,
     onOpen: (d, close) => {
       d.classList.add('bulkimp');
@@ -967,18 +1033,20 @@ async function poBulkImport() {
       const pick = rows.filter((r, i) => !r.error && $(`[data-bi="${i}"]`, d)?.checked);
       if (!pick.length) throw new Error('Choose the files and tick at least one PO.');
       const bad = pick.find(r => !r.po_no || !r.supplier_name); if (bad) throw new Error(`${bad.file.name}: enter the PO number and supplier.`);
-      let n = 0; const fails = [];
+      let n = 0; const fails = []; const newSups = new Set();
+      const known = new Set(S.po.suppliers.map(x => x.name.trim().toLowerCase()));
       for (const r of pick) {
         try {
           await q(sb.rpc('po_import', { p: { po_no: r.po_no, po_date: r.po_date, line_id: r.line_id, sub_line_id: r.sub_line_id, supplier_name: r.supplier_name, supplier_address: r.supplier_address,
             supplier_phone: r.supplier_phone, supplier_fax: r.supplier_fax, currency: r.currency, total: String(r.total ?? '').replace(/[^0-9.]/g, ''), status: r.status, quote_ref: r.quote_ref,
             lines: r.lines.map(l => ({ part_no: l.part_no, description: l.description, qty: l.qty, uom: l.uom, rate: l.rate })),
             file: { name: r.file.name, mime: r.file.type, data: await fileB64(r.file) } } }));
-          n++;
+          n++; const k = String(r.supplier_name || '').trim().toLowerCase(); if (k && !known.has(k)) newSups.add(k);
         } catch (e) { fails.push(`${r.po_no}: ${niceError(e)}`); }
       }
       S.po.at = 0; render({ quiet: true });
-      if (fails.length) { toast(`Added ${plural(n, 'PO')}. Not added: ${fails.join(' · ')}`, true); } else toast(`Added ${plural(n, 'old PO')} to the history`);
+      const sups = newSups.size ? ` · ${plural(newSups.size, 'new supplier')} added to Suppliers` : '';
+      if (fails.length) { toast(`Added ${plural(n, 'PO')}${sups}. Not added: ${fails.join(' · ')}`, true); } else toast(`Added ${plural(n, 'old PO')} to the history${sups}`);
     } });
 }
 
