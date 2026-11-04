@@ -65,24 +65,52 @@ const hrInvalidate = () => { S.hr.at = 0; };
 const hrHasTeam = () => { const me = hrMe(); return !!me && S.hr.dir.some(c => c.manager_id === me.id); };
 
 // ================================================================ shell: menu and phone bar
+// 3.0.2: the staff menu agreed for PeopleCore (Discover · Work · Pay · Approvals · My team · Company)
+const HR_WORK = [['leave', 'Leave'], ['requisition', 'Requisition'], ['performance', 'Performance'], ['competency', 'Competency'], ['promotion', 'Promotion'],
+  ['redeployment', 'Redeployment'], ['disciplinary', 'Disciplinary'], ['onboarding', 'Onboarding'], ['exit', 'Exit'], ['surveys', 'Surveys']];
+// what each part will hold, and when it arrives (shown on pages that aren't built yet)
+const HR_SOON = {
+  leave: ['Leave', 'Your leave balances for each type, apply with a relief officer, your leave plan for the year, history, and your leave allowance status.', 'Next update'],
+  requisition: ['Requisition', 'Overtime, expense and service requests, each worked out and approved the way HR sets it up.', 'Next update'],
+  performance: ['Performance', 'Your objectives and progress, self-appraisal, your manager’s review and your final rating.', 'A later update'],
+  competency: ['Competency', 'The skills your role needs, your assessed level and your gaps.', 'A later update'],
+  promotion: ['Promotion', 'Promotions and salary reviews: your history and any recommendation in progress.', 'A later update'],
+  redeployment: ['Redeployment', 'Ask to move to another unit, location or position, and follow your request.', 'A later update'],
+  disciplinary: ['Disciplinary', 'Queries addressed to you, your replies and the outcome. Private to you and HR.', 'A later update'],
+  onboarding: ['Onboarding', 'Your onboarding checklist and your confirmation at the end of probation.', 'A later update'],
+  exit: ['Exit', 'Resign, and follow your handover and clearance.', 'A later update'],
+  surveys: ['Surveys', 'Surveys HR sends you, and the anonymous mood check-in.', 'A later update'],
+  pay: ['Pay', 'Your payslips, salary history and yearly tax summary. Amounts stay hidden until you tap the eye.', 'With Payroll'],
+  announcements: ['Announcements', 'News from HR and Admin, pinned notices, and policies to read and confirm.', 'Next update'],
+  policies: ['Policies & handbook', 'The staff handbook and company policies, published by HR.', 'Next update'],
+  holidays: ['Public holidays', 'This year’s public holidays, kept by HR.', 'Next update'] };
+const hrNavKey = parts => { const a = parts[1] || '', b = parts[2] || '';
+  if (a === 'emp') return 'people/staff';
+  if (['directory', 'org', 'company'].includes(a)) return 'people/company';
+  if (a === 'work' && b) return 'people/work/' + b;
+  return a ? 'people/' + a : 'people'; };
 function peopleNav() {
-  const main = [['people', 'Home', 'home'], ['people/me', 'My profile', 'user'], ['people/directory', 'Directory', 'users'],
-    ...(hrHasTeam() ? [['people/team', 'My team', 'users']] : []), ['people/approvals', 'Approvals', 'check'], ['people/org', 'Org chart', 'chart']];
+  const inWork = /^people\/work/.test(S.hr.navKey || '');
+  const main = [['people', 'Discover', 'compass'], ['people/work', 'Work', 'kit'],
+    ...(inWork ? HR_WORK.map(([k, l]) => ['people/work/' + k, l, null]) : []),
+    ['people/pay', 'Pay', 'pay'], ['people/approvals', 'Approvals', 'check'],
+    ...(hrHasTeam() ? [['people/team', 'My team', 'users']] : []), ['people/company', 'Company', 'building']];
   const setup = [...(isHR() ? [['people/staff', 'Staff records', 'audit']] : []), ...(isHRAdmin() ? [['people/settings', 'PeopleCore settings', 'gear']] : []),
     ...(isAdmin() ? [['team', 'Nest admin', 'users']] : [])];
-  return { main, setup };
+  return { main, setup, setupLabel: 'HR' };
 }
 function peopleBottomBar() {
   return `<nav class="bottombar">
-    <a href="#/people" data-r="people">${ico('home')}Home</a>
-    <a href="#/people/me" data-r="people/me">${ico('user')}Profile</a>
-    <a href="#/people/directory" data-r="people/directory">${ico('users')}People</a>
+    <a href="#/people" data-r="people">${ico('compass')}Discover</a>
+    <a href="#/people/work" data-r="people/work">${ico('kit')}Work</a>
     <a href="#/people/approvals" data-r="people/approvals">${ico('check')}Approvals</a>
+    <a href="#/people/company" data-r="people/company">${ico('building')}Company</a>
     <a href="#/" data-r="home">${ico('grid')}Apps</a></nav>`;
 }
 // the menu depends on HR role and whether you manage anyone: rebuild it when that changes
 function peopleReshell(navKey) {
-  const sig = [hrRole(), hrHasTeam(), S.hr.appr.length].join('|');
+  S.hr.navKey = navKey;
+  const sig = [hrRole(), hrHasTeam(), S.hr.appr.length, /^people\/work/.test(navKey)].join('|');
   if (sig === S.hr.navSig) return;
   S.hr.navSig = sig; S.shellReady = false; shell(); setNav(navKey);
   const a = $(`.nav [data-r="people/approvals"]`); if (a && S.hr.appr.length) a.insertAdjacentHTML('beforeend', `<span class="count">${S.hr.appr.length}</span>`);
@@ -97,10 +125,10 @@ ROUTES.people = {
   async load(parts, params) {
     await hrLookups();
     const p1 = parts[1] || '';
-    const pages = { '': hrHome, me: hrMePage, directory: hrDirPage, team: hrTeamPage, approvals: hrApprPage, org: hrOrgPage,
+    const pages = { '': hrHome, me: hrMePage, directory: hrDirPage, company: hrDirPage, team: hrTeamPage, approvals: hrApprPage, org: hrOrgPage, work: hrWorkPage, pay: hrSoonPage,
       staff: typeof hrStaffPage !== 'undefined' ? hrStaffPage : null, emp: typeof hrEmpPage !== 'undefined' ? hrEmpPage : null, settings: typeof hrSettingsPage !== 'undefined' ? hrSettingsPage : null };
     this.page = pages[p1] || hrHome;
-    peopleReshell(p1 === 'emp' ? 'people/staff' : p1 ? 'people/' + p1 : 'people');
+    peopleReshell(hrNavKey(parts));
     if ((p1 === 'staff' || p1 === 'emp') && !isHR()) return topbar('Staff records') + '<div class="notice">Only HR can see staff records.</div>';
     if (p1 === 'settings' && !isHRAdmin()) return topbar('PeopleCore settings') + '<div class="notice">Only HR admins can change PeopleCore settings. Ask the Super Admin if you need it.</div>';
     return this.page.load(parts, params);
@@ -136,7 +164,7 @@ const hrHome = {
     }
     return `<section class="hero hr-hero"><img class="bgmark" src="brand/mark.png" alt="">
         <div>${hrAv(me ? { ...me.card } : { name: S.profile.full_name }, 'xl')}</div>
-        <div><div class="motto">PeopleCore</div><h1>${first ? `Hello, ${esc(first)}` : 'Hello'}</h1>
+        <div><div class="motto">PeopleCore · Discover</div><h1>${first ? `Hello, ${esc(first)}` : 'Hello'}</h1>
         <div class="sub">${me ? `${esc(me.card?.title || 'No position yet')}${me.card?.unit ? ' · ' + esc(me.card.unit) : ''}${me.manager ? ` · reports to ${esc(me.manager)}` : ''}` : 'HR hasn’t added your PeopleCore record yet. You can still use the directory and org chart.'}</div></div>
         <div class="actions">${me ? `<a class="btn" href="#/people/me">${ico('user')}My profile</a>` : ''}${S.hr.appr.length ? `<a class="btn tagbtn" href="#/people/approvals">${ico('check')}${plural(S.hr.appr.length, 'approval')} waiting</a>` : ''}</div></section>
       ${hr}
@@ -323,14 +351,15 @@ function hrAddDoc(empId) {
 
 // ================================================================ DIRECTORY
 const hrDirPage = {
-  async load() {
+  async load(parts = []) {
     const f = S.hr.dirf;
     const depts = hrUnitsOrdered().filter(u => u.active);
     const inUnit = (c, uid) => { let u = hrUnit(c.unit_id), g = 0; while (u && g++ < 12) { if (u.id === +uid) return true; u = hrUnit(u.parent_id); } return false; };
     const ql = f.q.trim().toLowerCase();
     const rows = S.hr.dir.filter(c => (!f.unit || inUnit(c, f.unit)) && (!ql || [c.name, c.first_name, c.last_name, c.title, c.unit, c.location, c.work_email, c.emp_no].join(' ').toLowerCase().includes(ql)));
     const pub = S.hr.fields.filter(x => x.active && x.visibility === 'everyone');
-    return topbar('Directory', `${plural(S.hr.dir.length, 'person', 'people')} at ${esc(CFG.ORG_SHORT || 'GANKCO')}`) +
+    if (parts[1] === 'company' && parts[2]) return hrSoonPage.load(['people', parts[2]]);
+    return topbar('Company', `${plural(S.hr.dir.length, 'person', 'people')} at ${esc(CFG.ORG_SHORT || 'GANKCO')}`) + hrCompanyTabs('directory') +
       `<div class="filters"><input type="search" id="dq" placeholder="Search by name, role, team or email" value="${esc(f.q)}">
         <select id="du"><option value="">Every department</option>${depts.map(u => `<option value="${u.id}" ${+f.unit === u.id ? 'selected' : ''}>${'  '.repeat(u.depth)}${esc(u.name)}</option>`).join('')}</select>
         <span class="sub" id="dn">${plural(rows.length, 'person', 'people')}</span></div>
@@ -341,7 +370,7 @@ const hrDirPage = {
   },
   bind(main) {
     const f = S.hr.dirf;
-    const qi = $('#dq', main); qi.oninput = debounce(() => { f.q = qi.value; render({ quiet: true }).then(() => { const n = $('#dq'); if (n) { n.focus(); n.setSelectionRange(n.value.length, n.value.length); } }); }, 250);
+    const qi = $('#dq', main); if (!qi) return; qi.oninput = debounce(() => { f.q = qi.value; render({ quiet: true }).then(() => { const n = $('#dq'); if (n) { n.focus(); n.setSelectionRange(n.value.length, n.value.length); } }); }, 250);
     $('#du', main).onchange = e => { f.unit = e.target.value; render({ quiet: true }); };
     $$('[data-p]', main).forEach(b => b.onclick = () => hrPersonCard(+b.dataset.p));
   }
@@ -456,10 +485,10 @@ const hrOrgPage = {
     };
     const heads = S.hr.units.filter(u => u.active && u.head_position_id && hrPos(u.head_position_id)?.active);
     const filled = ps.filter(p => holders(p.id).length).length;
-    return topbar('Org chart', `${plural(ps.length, 'position')} · ${filled} filled · ${ps.filter(p => !holders(p.id).length && !p.is_external).length} vacant`,
+    return topbar('Company', `Org chart · ${plural(ps.length, 'position')} · ${filled} filled · ${ps.filter(p => !holders(p.id).length && !p.is_external).length} vacant`,
         `<select id="oroot" class="inline"><option value="">Whole company</option>${heads.map(u => opt(u.head_position_id, u.name, S.hr.orgRoot)).join('')}</select>
          <div class="seg" id="ozoom"><button data-z="out" title="Smaller">−</button><button data-z="fit" class="${S.hr.orgZoom === 'fit' || !S.hr.orgZoom ? 'on' : ''}">Fit</button><button data-z="in" title="Bigger">+</button></div>
-         <button class="btn" id="oprint">${ico('print')}Print</button>${isHRAdmin() ? `<a class="btn" href="#/people/settings?tab=org">${ico('edit')}Change the structure</a>` : ''}`) +
+         <button class="btn" id="oprint">${ico('print')}Print</button>${isHRAdmin() ? `<a class="btn" href="#/people/settings?tab=org">${ico('edit')}Change the structure</a>` : ''}`) + hrCompanyTabs('org') +
       (ps.length ? `<div class="org-wrap" id="orgwrap"><div class="org-print-head">${wordmark()}<b>${esc(CFG.COMPANY || '')}</b><span>Organisational chart · ${fd(localISO(0))}</span></div>
         <ul class="org">${root.map(node).join('')}</ul></div>
         <div class="org-legend"><span><i class="lg-filled"></i>Filled</span><span><i class="lg-vac"></i>Vacant</span><span><i class="lg-ext"></i>External</span><span>┄ dotted line</span></div>`
@@ -479,4 +508,53 @@ const hrOrgPage = {
       $$('#ozoom button', main).forEach(x => x.classList.toggle('on', x.dataset.z === 'fit' && S.hr.orgZoom === 'fit')); apply(); });
     apply();
   }
+};
+
+// ================================================================ 3.0.2: COMPANY TABS, WORK, PAGES STILL TO COME
+function hrCompanyTabs(on) {
+  const t = [['directory', 'Directory', '#/people/company'], ['org', 'Org chart', '#/people/org'], ['announcements', 'Announcements', '#/people/company/announcements'],
+    ['policies', 'Policies', '#/people/company/policies'], ['holidays', 'Holidays', '#/people/company/holidays']];
+  return `<div class="tabs hr-ctabs">${t.map(([k, l, h]) => `<a href="${h}" class="${on === k ? 'on' : ''}">${l}</a>`).join('')}</div>`;
+}
+const hrSoonPanel = k => { const [t, d, when] = HR_SOON[k] || [k, '', 'A later update'];
+  return `<section class="panel hr-soon"><div class="body"><span class="hr-soon-ico">${ico('clock')}</span><div><div class="hr-soon-when">${esc(when)}</div><h2>${esc(t)}</h2><p>${esc(d)}</p>
+    <p class="sub">This part of PeopleCore is being built. PeopleCore goes live for everyone once all of it is ready.</p></div></div></section>`; };
+const hrSoonPage = {
+  async load(parts) {
+    const k = parts[1] === 'work' ? parts[2] : parts[1] === 'company' ? parts[2] : parts[1];
+    const title = parts[1] === 'company' || ['announcements', 'policies', 'holidays'].includes(k) ? 'Company' : HR_SOON[k]?.[0] || 'PeopleCore';
+    return topbar(title) + (title === 'Company' ? hrCompanyTabs(k) : '') + hrSoonPanel(k);
+  }
+};
+// the share of a person's own record that's filled in (shown as "Complete your profile")
+function hrProfileDone(me) {
+  const pv = me.private || {};
+  const checks = [['photo', 'a photo', me.photo], ['dob', 'your date of birth', me.date_of_birth], ['mobile', 'your mobile number', me.mobile], ['addr', 'your home address', me.address],
+    ['pemail', 'a personal email', me.personal_email], ['kin', 'a next of kin', (me.kin || []).some(k => k.kind === 'next_of_kin')], ['emerg', 'an emergency contact', (me.kin || []).some(k => k.kind === 'emergency')],
+    ['bank', 'your bank details', pv.account_no], ['tin', 'your tax ID', pv.tin], ['pen', 'your pension details', pv.rsa_pin], ['nhf', 'your NHF number', pv.nhf_no], ['nin', 'your NIN', pv.nin]];
+  const missing = checks.filter(c => !c[2]).map(c => c[1]);
+  return { pct: Math.round((checks.length - missing.length) / checks.length * 100), missing };
+}
+const hrWorkPage = {
+  async load(parts) {
+    if (parts[2]) return parts[2] === 'requisition' || parts[2] === 'leave' || HR_SOON[parts[2]] ? hrSoonPage.load(parts) : hrSoonPage.load(['people', 'work', 'leave']);
+    const me = hrMe();
+    if (!me) return topbar('Work') + `<div class="notice">HR hasn’t added your PeopleCore record yet, or it isn’t linked to your sign-in. Ask HR.</div>`;
+    const c = me.card || {}; const done = hrProfileDone(me);
+    const reqs = this.reqs = await q(sb.from('hr_requests').select('id,kind,title,status,created_at,steps,current_step,employee_id').eq('employee_id', me.id).eq('status', 'pending').order('created_at', { ascending: false }));
+    const qa = (icon, label, k) => `<a href="#/people/work/${k}">${ico(icon)}${label}</a>`;
+    return `<section class="panel hr-wcard"><div class="body">${hrAv(c, 'xl')}
+        <div class="hr-idmain"><h2>${esc(hrFullName(me))}</h2><div class="sub">${esc(c.title || 'No position yet')}${c.unit ? ' · ' + esc(c.unit) : ''}</div>
+          <div class="hr-chips">${c.emp_no ? `<span class="tag">${esc(c.emp_no)}</span>` : ''}${chip(HR_STATUS[me.status]?.[0] || 'muted', HR_STATUS[me.status]?.[1] || me.status)}${c.emp_type ? chip('muted', c.emp_type) : ''}${c.location ? chip('muted', c.location) : ''}</div></div>
+        <div class="hr-wmgr"><div class="mlbl">Line manager</div><div class="who">${me.manager_id ? hrAv(hrCard(me.manager_id) || { name: me.manager }, 'sm') : ''}<b>${esc(me.manager || '—')}</b></div>
+          <div class="hr-wbtns"><a class="btn small" href="#/people/me">${ico('user')}My profile</a><a class="btn small" href="#/people/org">View org chart</a></div></div></div></section>
+      ${done.pct < 100 ? `<section class="hr-complete"><span class="hr-ring" style="--p:${done.pct}"><b>${done.pct}%</b></span><div><div class="t">Complete your profile</div><div class="sub">Still missing: ${esc(done.missing.slice(0, 4).join(', '))}${done.missing.length > 4 ? ` and ${done.missing.length - 4} more` : ''}. HR checks every change.</div></div>
+        <a class="btn small primary" href="#/people/me">Complete it</a></section>` : ''}
+      <section class="hr-qa">${qa('plan', 'Apply for leave', 'leave')}${qa('clock', 'Raise overtime', 'requisition')}${qa('plus', 'New requisition', 'requisition')}${qa('move', 'Request redeployment', 'redeployment')}</section>
+      <section class="panel"><header><h2>My open requests</h2><span class="meta">${reqs.length}</span><div class="right"><a class="btn small" href="#/people/approvals?tab=mine">All requests</a></div></header>
+        ${reqs.length ? `<ul class="list">${reqs.map(hrReqLi).join('')}</ul>` : '<div class="empty">Nothing waiting.</div>'}</section>
+      <section class="panel"><header><h2>My work</h2><span class="meta">Everything about your job in PeopleCore</span></header>
+        <div class="hr-wgrid">${HR_WORK.map(([k, l]) => `<a class="hr-wtile" href="#/people/work/${k}"><b>${esc(l)}</b><span>${esc(HR_SOON[k][1])}</span><em>${esc(HR_SOON[k][2])}</em></a>`).join('')}</div></section>`;
+  },
+  bind() { }
 };

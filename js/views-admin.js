@@ -473,7 +473,7 @@ function backupPanel() {
   const b = lastBackup(), due = backupDue();
   const next = new Date(); next.setMonth(next.getMonth() + (due ? 0 : 1), 1);
   return `<section class="panel" id="backups"><header><h2>Backups</h2>${due ? chip('overdue', 'Due this month') : chip('ok', 'Up to date')}</header><div class="body">
-    <p class="muted">A backup is one file with everything in Nest: items, stock, movements, materials requests, counts, sign-offs, signatures, prices, the job planner, users and the audit log. Download one at the start of every month and save it in the <b>Nest Backups</b> folder in the Nest Gmail’s Google Drive.</p>
+    <p class="muted">A backup is one file with everything in Nest: items, stock, movements, materials requests, counts, sign-offs, signatures, prices, the job planner, purchase orders, PeopleCore staff records, users and the audit log. Because it holds staff bank, tax and ID details, it’s locked with a password you choose. Download one at the start of every month and save it in the <b>Nest Backups</b> folder in the Nest Gmail’s Google Drive.</p>
     <dl class="kv"><dt>Last backup</dt><dd>${b ? `${fdt(b.at)}${b.by_name ? ' · ' + esc(b.by_name) : ''}` : '<span class="sub">None yet</span>'}</dd>
       <dt>Next due</dt><dd>${due ? 'Now' : `1 ${next.toLocaleDateString('en-GB', { month: 'long', year: 'numeric' })}`}</dd></dl>
     <div class="actionrow mt"><button class="btn primary" type="button" id="bk-dl">${ico('down')}Download backup</button></div>
@@ -483,28 +483,58 @@ function backupPanel() {
 }
 function bindBackup(main) {
   const dl = $('#bk-dl', main), rs = $('#bk-rs', main);
-  if (dl) dl.onclick = async () => {
-    const t = dl.innerHTML; dl.disabled = true; dl.textContent = 'Preparing backup…';
-    try {
+  // 3.0.2: the backup holds PeopleCore's locked data (bank, tax, pension, IDs), so the file is locked with a password
+  if (dl) dl.onclick = () => modal({
+    title: 'Download backup', submit: 'Download locked backup',
+    sub: 'The backup includes staff bank, tax, pension and ID details from PeopleCore, so Nest locks the file with a password. Without the password nobody can open it, not even you.',
+    body: `<label class="f">Backup password <span class="hint">At least 10 characters. Keep it where you keep the Nest account passwords: it can’t be recovered.</span><input type="password" name="pw" autocomplete="new-password" required></label>
+      <label class="f">Type it again<input type="password" name="pw2" autocomplete="new-password" required></label>`,
+    onSubmit: async x => {
+      if ((x.pw || '').length < 10) throw new Error('Use at least 10 characters.');
+      if (x.pw !== x.pw2) throw new Error('The two passwords are different.');
       const data = await q(sb.rpc('export_backup'));
       const rows = Object.values(data.row_counts || {}).reduce((a, b) => a + b, 0);
-      saveBlob(new Blob([JSON.stringify(data)], { type: 'application/json' }), `gankco-nest-backup-${localISO(0)}.json`);
+      const locked = await bkLock(data, x.pw);
+      saveBlob(new Blob([JSON.stringify(locked)], { type: 'application/json' }), `gankco-nest-backup-${localISO(0)}.json`);
       await loadLookups(); refreshAlerts();
-      toast(`Backup downloaded: ${plural(Object.keys(data.tables || {}).length, 'table')}, ${rows.toLocaleString()} records. Save it to Nest Backups in Google Drive.`);
+      toast(`Locked backup downloaded: ${plural(Object.keys(data.tables || {}).length, 'table')}, ${rows.toLocaleString()} records. Save it to Nest Backups in Google Drive.`);
       render({ quiet: true });
-    } catch (e) { toast(niceError(e), true); dl.disabled = false; dl.innerHTML = t; }
-  };
+    } });
   if (rs) rs.onclick = () => modal({
     title: 'Make restore script', submit: 'Make script',
     sub: 'Choose a Nest backup file (gankco-nest-backup-….json). Nothing changes in Nest yet: this only makes the script.',
-    body: '<label class="f">Backup file<input type="file" accept=".json,application/json" required></label>',
+    body: `<label class="f">Backup file<input type="file" accept=".json,application/json" required></label>
+      <label class="f">Backup password <span class="hint">For locked backups (made from Nest 3.0.2 on). Older backups don’t have one.</span><input type="password" name="pw" autocomplete="off"></label>
+      <p class="sub">The restore files hold everything in plain text, including staff bank and ID details. Delete them once the restore is done.</p>`,
     onSubmit: async (x, d) => {
       const file = $('input[type=file]', d).files[0]; if (!file) throw new Error('Choose the backup file.');
       let data; try { data = JSON.parse(await file.text()); } catch { throw new Error('That file isn’t a Nest backup.'); }
+      if (data.format === 'gankco-nest-backup-locked') { if (!x.pw) throw new Error('This backup is locked: type its password.'); data = await bkUnlock(data, x.pw); }
       if (data.format !== 'gankco-nest-backup' || !data.tables) throw new Error('That file isn’t a Nest backup.');
       const parts = restoreParts(data);
       setTimeout(() => restoreDownloads(data, parts), 50);
     } });
+}
+// locking backups: AES-256-GCM with a key made from the password (PBKDF2-SHA256), all in the browser
+const BK64 = {
+  enc(buf) { const b = new Uint8Array(buf); let s = ''; for (let i = 0; i < b.length; i += 0x8000) s += String.fromCharCode.apply(null, b.subarray(i, i + 0x8000)); return btoa(s); },
+  dec(str) { const s = atob(str); const b = new Uint8Array(s.length); for (let i = 0; i < s.length; i++) b[i] = s.charCodeAt(i); return b; } };
+async function bkKey(pw, salt, iterations) {
+  const base = await crypto.subtle.importKey('raw', new TextEncoder().encode(pw), 'PBKDF2', false, ['deriveKey']);
+  return crypto.subtle.deriveKey({ name: 'PBKDF2', salt, iterations, hash: 'SHA-256' }, base, { name: 'AES-GCM', length: 256 }, false, ['encrypt', 'decrypt']);
+}
+async function bkLock(data, pw) {
+  if (!window.crypto?.subtle) throw new Error('This browser can’t lock files. Use Chrome or Edge.');
+  const salt = crypto.getRandomValues(new Uint8Array(16)), iv = crypto.getRandomValues(new Uint8Array(12)), iterations = 310000;
+  const ct = await crypto.subtle.encrypt({ name: 'AES-GCM', iv }, await bkKey(pw, salt, iterations), new TextEncoder().encode(JSON.stringify(data)));
+  return { format: 'gankco-nest-backup-locked', format_version: 1, schema_version: data.schema_version, created_at: data.created_at, created_by: data.created_by,
+    row_counts: data.row_counts, kdf: { name: 'PBKDF2-SHA256', iterations, salt: BK64.enc(salt) }, cipher: 'AES-256-GCM', iv: BK64.enc(iv), data: BK64.enc(ct) };
+}
+async function bkUnlock(f, pw) {
+  try {
+    const key = await bkKey(pw, BK64.dec(f.kdf.salt), f.kdf.iterations);
+    return JSON.parse(new TextDecoder().decode(await crypto.subtle.decrypt({ name: 'AES-GCM', iv: BK64.dec(f.iv) }, key, BK64.dec(f.data))));
+  } catch (e) { throw new Error('Wrong password, or the backup file is damaged.'); }
 }
 function restoreParts(data, limit = 900000) {
   const all = JSON.stringify(data.tables);

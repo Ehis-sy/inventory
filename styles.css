@@ -1192,3 +1192,40 @@ a.kpi { text-decoration: none; color: inherit; } a.kpi:hover { background: #F6F8
 .org ul.leafs::before { height: calc(100% - 30px); z-index: 0; }
 .org ul.leafs > li { padding: 0; z-index: 1; }
 .org ul.leafs > li::before, .org ul.leafs > li::after { display: none; }
+
+/* =================== v3.0.2: PeopleCore staff menu =================== */
+.nav a.subitem { padding: 5px 10px 5px 42px; font-size: 14px; color: #A9ADB3; }
+.nav a.subitem.on { color: #fff; background: transparent; box-shadow: inset 2px 0 0 var(--brand); }
+.tabs a { padding: 10px 14px; font-weight: 700; color: var(--muted); text-decoration: none; border-bottom: 3px solid transparent; margin-bottom: -2px; white-space: nowrap; }
+.tabs a.on { color: var(--ink); border-bottom-color: var(--brand); }
+.tabs { overflow-x: auto; }
+.hr-soon .body { display: flex; gap: 18px; align-items: flex-start; padding: 26px 24px; }
+.hr-soon-ico { width: 52px; height: 52px; border-radius: 14px; background: #FFF1EC; color: var(--brand-deep); display: grid; place-items: center; flex: none; }
+.hr-soon-ico svg { width: 26px; height: 26px; }
+.hr-soon h2 { font-family: var(--display); font-weight: 800; font-size: 22px; margin: 2px 0 6px; }
+.hr-soon p { margin: 0 0 8px; max-width: 640px; }
+.hr-soon-when { font-size: 12px; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; color: var(--brand-deep); }
+.hr-wcard .body { display: flex; gap: 18px; align-items: center; flex-wrap: wrap; }
+.hr-wmgr { margin-left: auto; display: grid; gap: 8px; min-width: 240px; }
+.hr-wmgr .mlbl { font-size: 12px; color: var(--muted); text-transform: uppercase; letter-spacing: .06em; font-weight: 600; }
+.hr-wmgr .who { display: flex; gap: 8px; align-items: center; }
+.hr-wbtns { display: flex; gap: 8px; flex-wrap: wrap; }
+.hr-complete { display: flex; gap: 14px; align-items: center; padding: 14px 18px; background: #FFF7F3; border: 1px solid #F6D3C5; border-radius: 12px; margin-bottom: 18px; }
+.hr-complete .t { font-weight: 700; } .hr-complete .sub { color: var(--muted); font-size: 13px; }
+.hr-complete .btn { margin-left: auto; }
+.hr-ring { --p: 80; width: 58px; height: 58px; border-radius: 50%; background: conic-gradient(var(--brand) calc(var(--p) * 1%), #EEF0F2 0); display: grid; place-items: center; flex: none; }
+.hr-ring b { width: 46px; height: 46px; border-radius: 50%; background: #fff; display: grid; place-items: center; font-weight: 800; font-size: 14px; }
+.hr-qa { display: flex; gap: 8px; flex-wrap: wrap; background: #1A1B1E; border-radius: 14px; padding: 14px 16px; margin-bottom: 18px; }
+.hr-qa a { display: inline-flex; gap: 8px; align-items: center; padding: 9px 14px; border-radius: 10px; background: rgba(255,255,255,.08); border: 1px solid rgba(255,255,255,.16); color: #fff; text-decoration: none; font-weight: 600; font-size: 14px; }
+.hr-qa a:first-child { background: var(--flame); border-color: var(--brand-deep); }
+.hr-qa svg { width: 17px; height: 17px; }
+.hr-wgrid { display: grid; grid-template-columns: repeat(auto-fill, minmax(230px, 1fr)); gap: 12px; padding: 14px 16px; }
+.hr-wtile { display: grid; gap: 4px; padding: 14px; border: 1px solid var(--line); border-radius: 10px; text-decoration: none; color: inherit; transition: border-color .15s; }
+.hr-wtile:hover { border-color: var(--brand); }
+.hr-wtile span { color: var(--muted); font-size: 13px; }
+.hr-wtile em { font-style: normal; font-size: 12px; font-weight: 700; color: var(--brand-deep); }
+@media print { body.print-org .hr-ctabs { display: none !important; } }
+@media (max-width: 760px) { .hr-wmgr { margin-left: 0; width: 100%; } .hr-complete { flex-wrap: wrap; } .hr-complete .btn { margin-left: 0; } }
+/* 3.0.2: the menu scrolls when Work is open on a short screen */
+.side { overflow-y: auto; scrollbar-width: thin; }
+.side .side-foot { margin-top: auto; }

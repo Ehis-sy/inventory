@@ -1,4 +1,4 @@
-# GANKCO Nest: version 3.0 update (PeopleCore)
+# GANKCO Nest: version 3.0.2 update (PeopleCore)
 
 *Built to support engineered solutions.*
 
@@ -9,7 +9,20 @@
 - **Emails:** sent by Brevo from **nest-alerts@gankcoenergy.com** as "GANKCO Nest". Sign-in emails use Supabase's custom SMTP (templates in Supabase → Authentication → Emails → Templates). Alert emails use the Brevo API key saved in Supabase Vault as `brevo_api_key`, on a schedule (pg_cron).
 - **DNS (company IT):** `nest` CNAME → `gankco-energy.github.io`, plus the Brevo verification records.
 
-## Install 3.0 (about 5 minutes)
+## Install 3.0.2 (about 3 minutes)
+
+1. **Supabase → SQL Editor → New query:** paste all of **`18-nest-v3.0.2-upgrade.sql`** and press **Run**. It should end with **Nest 3.0.2 installed**. Safe to run again.
+2. **GitHub:** unzip **`gankco-nest-v3.0.2.zip`** and upload everything into **github.com/gankco-energy/gankco-nest**, then commit. Keep the `CNAME` file.
+3. Reload Nest (**Ctrl + Shift + R**). The bottom of each page shows **v3.0.2**.
+4. **Next backup:** Nest now asks for a password and locks the file. Keep the password where you keep the Nest account passwords: without it the backup can't be opened.
+
+### What's new in 3.0.2
+- **PeopleCore "Coming soon":** staff see the PeopleCore tile on Nest home as *Coming soon* until go-live. Only you and the HR team can open it.
+- **The agreed staff menu:** Discover · Work (Leave, Requisition, Performance, Competency, Promotion, Redeployment, Disciplinary, Onboarding, Exit, Surveys) · Pay · Approvals · My team · Company (Directory, Org chart, Announcements, Policies, Holidays). Parts not built yet show what they'll hold.
+- **Work page:** profile card with your line manager, *Complete your profile* (what's still missing), quick actions, your open requests and every Work section.
+- **Locked backups:** the monthly backup now holds PeopleCore staff records (bank, tax, pension and ID numbers), so it's locked with a password you choose (AES-256). Restoring asks for the password. Older backups still restore without one. Every backup download is recorded in PeopleCore's activity log.
+
+## Install 3.0 (already done, for reference)
 
 1. **Lock Nest:** **Nest admin → Nest settings → Maintenance → Schedule maintenance → All of Nest → Start now**.
 2. **Supabase → SQL Editor → New query:** paste all of **`16-nest-v3.0-upgrade.sql`** and press **Run**. It should end with **Nest 3.0 (PeopleCore) installed**. It's safe to run again. Nothing in Inventory or Purchase Orders changes.

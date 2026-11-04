@@ -496,7 +496,7 @@ function hrBindRoles(main) {
 }
 
 // ---- activity log
-const HR_LOG_ACT = { insert: 'Added', update: 'Changed', delete: 'Removed', view: 'Viewed', request: 'Request sent' };
+const HR_LOG_ACT = { insert: 'Added', update: 'Changed', delete: 'Removed', view: 'Viewed', request: 'Request sent', backup: 'Downloaded a backup' };
 const HR_LOG_TBL = { hr_employees: 'record', hr_private: 'locked section', hr_kin: 'next of kin', hr_documents: 'document', hr_units: 'unit', hr_positions: 'position', hr_lists: 'list item',
   hr_fields: 'custom field', hr_flows: 'approval chain', hr_roles: 'HR team', hr_standins: 'stand-in', hr_requests: 'request' };
 async function hrSetLog(params) {
@@ -504,14 +504,14 @@ async function hrSetLog(params) {
   let qy = sb.from('hr_log').select('*').order('at', { ascending: false }).limit(300);
   if (emp) qy = qy.eq('employee_id', +emp); if (act) qy = qy.eq('action', act);
   const rows = await q(qy);
-  const det = r => { const d = r.detail || {}; if (r.action === 'view') return esc(d.what || '');
+  const det = r => { const d = r.detail || {}; if (r.action === 'view' || r.action === 'backup') return esc(d.what || '');
     if (r.action === 'request') return esc(d.title || '');
-    return Object.entries(d).filter(([k]) => !['id', 'employee_id', 'custom', 'sort'].includes(k) || r.action === 'update').slice(0, 8).map(([k, v]) => v?.changed ? `<span class="hr-lk">${esc(HR_LABEL[k] || k)}</span>` : v && 'to' in v ? `<span class="hr-lk">${esc(HR_LABEL[k] || k)}</span>${r.action === 'update' ? `: ${esc(fmtv(v.from))} → ${esc(fmtv(v.to))}` : `: ${esc(fmtv(v.to))}`}` : '').filter(Boolean).join(' · '); };
+    return Object.entries(d).filter(([k]) => !['id', 'employee_id', 'custom', 'sort'].includes(k) || r.action === 'update').slice(0, 8).map(([k, v]) => v?.changed ? `<span class="hr-lk">${esc(HR_LABEL[k] || k)}</span>` : v && typeof v === 'object' && 'to' in v ? `<span class="hr-lk">${esc(HR_LABEL[k] || k)}</span>${r.action === 'update' ? `: ${esc(fmtv(v.from))} → ${esc(fmtv(v.to))}` : `: ${esc(fmtv(v.to))}`}` : '').filter(Boolean).join(' · '); };
   const fmtv = v => v == null || v === '' ? '(blank)' : typeof v === 'object' ? JSON.stringify(v).slice(0, 60) : String(v).slice(0, 60);
   return `<div class="filters"><select id="le"><option value="">Everyone</option>${S.hr.dir.map(c => opt(c.id, c.name, emp)).join('')}</select>
       <select id="la"><option value="">Every action</option>${Object.entries(HR_LOG_ACT).map(([k, l]) => opt(k, l, act)).join('')}</select><span class="sub">Latest ${rows.length}. Only HR admins see this log. Locked values are never stored in it.</span></div>
     <section class="panel">${rows.length ? `<ul class="list audit">${rows.map(r => `<li><div style="flex:1;min-width:0"><div><b>${esc(r.user_name || 'System')}</b> ${esc((HR_LOG_ACT[r.action] || r.action).toLowerCase())} ${esc(HR_LOG_TBL[r.table_name] || r.table_name || '')}${r.employee_id ? ` · <a href="#/people/emp/${r.employee_id}">${esc(hrNameOf(r.employee_id) || 'record ' + r.employee_id)}</a>` : ''}
-      ${r.action === 'view' ? ' ' + chip('pending', 'Locked data viewed') : ''}</div><div class="sub">${det(r)}</div></div><div class="end sub">${fdt(r.at)}</div></li>`).join('')}</ul>` : '<div class="empty">Nothing logged yet.</div>'}</section>`;
+      ${r.action === 'view' || r.action === 'backup' ? ' ' + chip('pending', 'Locked data viewed') : ''}</div><div class="sub">${det(r)}</div></div><div class="end sub">${fdt(r.at)}</div></li>`).join('')}</ul>` : '<div class="empty">Nothing logged yet.</div>'}</section>`;
 }
 function hrBindLog(main, params) {
   const upd = () => { const e = $('#le', main).value, a = $('#la', main).value; go('#/people/settings?tab=log' + (e ? '&emp=' + e : '') + (a ? '&a=' + a : '')); };

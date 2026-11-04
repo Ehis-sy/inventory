@@ -188,6 +188,9 @@ const I = {
   pdf: '<path d="M6 2h9l5 5v15H6z"/><path d="M15 2v5h5M9 13h6M9 17h4"/>',
   edit: '<path d="M4 20h4L19 9l-4-4L4 16z"/><path d="M14 6l4 4"/>',
   move: '<path d="M5 12h14M15 8l4 4-4 4M9 16l-4-4 4-4"/>',
+  compass: '<circle cx="12" cy="12" r="9"/><path d="M15.5 8.5l-2 5-5 2 2-5z"/>',
+  pay: '<rect x="2" y="6" width="20" height="13" rx="2"/><circle cx="12" cy="12.5" r="2.8"/><path d="M6 9.5h.01M18 15.5h.01"/>',
+  building: '<path d="M3 21V8l9-5 9 5v13"/><path d="M9 21v-6h6v6"/>',
   kit: '<rect x="3" y="7" width="18" height="13" rx="2"/><path d="M8 7V5a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2M3 12h18"/>',
 };
 const ico = n => `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${I[n]}</svg>`;
@@ -523,14 +526,14 @@ function navItems() {
 function shell() {
   if (S.shellReady) return;
   const p = S.profile; const { main, setup } = navItems();
-  const link = ([r, l, i]) => `<a href="#/${r}" data-r="${r}">${ico(i)}${l}${r === 'approvals' && isAdmin() ? `<span class="count" id="pendingCount" ${S.pending ? '' : 'hidden'}>${S.pending}</span>` : ''}</a>`;
+  const link = ([r, l, i]) => i === null ? `<a class="subitem" href="#/${r}" data-r="${r}">${l}</a>` : `<a href="#/${r}" data-r="${r}">${ico(i)}${l}${r === 'approvals' && isAdmin() ? `<span class="count" id="pendingCount" ${S.pending ? '' : 'hidden'}>${S.pending}</span>` : ''}</a>`;
   $('#app').innerHTML = `<div class="shell">
     <aside class="side">
       <a class="brand" href="#/"><img src="brand/mark-96.png" alt="">
         <span class="brand-name">${wordmark()}<small>Nest · ${S.shellApp === 'po' ? 'Purchasing' : S.shellApp === 'admin' ? 'Admin' : S.shellApp === 'people' ? 'PeopleCore' : 'Inventory'}</small></span></a>
       <a class="apps-link" href="#/">${ico('grid')}All apps</a>
       <nav class="nav">${main.map(link).join('')}
-        ${setup.length ? `<div class="nav-group">${S.shellApp === 'admin' ? 'Apps' : 'Setup'}</div>${setup.map(link).join('')}` : ''}</nav>
+        ${setup.length ? `<div class="nav-group">${S.shellApp === 'admin' ? 'Apps' : navItems().setupLabel || 'Setup'}</div>${setup.map(link).join('')}` : ''}</nav>
       <div class="side-foot">${CFG.TAGLINE ? `<div class="motto">${esc(CFG.TAGLINE)}</div>` : ''}
         <a class="who" href="#/account">${esc(p.full_name || p.email)}</a><div class="role">${S.shellApp === 'people' && typeof hrRole === 'function' ? esc(hrRole() === 'hr_admin' ? 'HR admin' : hrRole() === 'hr_officer' ? 'HR officer' : S.hr?.me?.card?.title || ROLE_LABEL[role()]) : ROLE_LABEL[role()] + (!isSuper() && !isMgmt() ? ' · ' + esc(myLineIds().map(lineShort).join(', ') || 'no service line') : '')}</div>
         ${realSuper() ? `<button class="btn small viewas-btn" id="viewas">${S.viewAs ? 'Change view' : 'View as…'}</button>` : ''}
@@ -573,7 +576,7 @@ async function render(opts = {}) {
   // 2.8: an app someone doesn't have can't be opened, even by typing its address
   const blocked = (app === 'inventory' || app === 'people') && !appAllowed(app);
   const view = blocked ? ROUTES.noapp : (ROUTES[r] || ROUTES.dashboard);
-  setNav(r === 'item' ? 'inventory' : r === 'job' ? 'jobs' : r === 'po' ? (parts[1] && isNaN(+parts[1]) ? 'po/' + parts[1] : 'po') : r === 'people' ? (parts[1] === 'emp' ? 'people/staff' : parts[1] ? 'people/' + parts[1] : 'people') : r);
+  setNav(r === 'item' ? 'inventory' : r === 'job' ? 'jobs' : r === 'po' ? (parts[1] && isNaN(+parts[1]) ? 'po/' + parts[1] : 'po') : r === 'people' ? (typeof hrNavKey === 'function' ? hrNavKey(parts) : 'people') : r);
   let main = $('#main'); const seq = ++renderSeq;
   const y = window.scrollY;
   if (!opts.quiet) main.innerHTML = '<div class="loading">Loading…</div>';
@@ -633,7 +636,9 @@ async function renderLauncher() {
     <section class="tiles">
       ${appAllowed('inventory') ? appTile('inventory', '#/dashboard', 'box', 'Inventory', 'Equipment, stock, materials requests, monthly counts and reports.', '<span class="t-meta" id="invMeta">Open</span>', true) : lockedTile('box', 'Inventory', 'Equipment, stock, materials requests, monthly counts and reports.')}
       ${typeof poCanView === 'function' && poCanView() ? appTile('po', '#/po/overview', 'audit', 'Purchase Order', 'Raise, sign and track purchase orders to OEMs and suppliers.', '<span class="t-meta" id="poMeta">Open</span>', true) : lockedTile('audit', 'Purchase Order', 'Raise, sign and track purchase orders to OEMs and suppliers.')}
-      ${appAllowed('people') ? appTile('people', '#/people', 'users', 'PeopleCore', 'Your HR self-service: profile, directory, org chart and approvals.', '<span class="t-meta" id="hrMeta">Open</span>', true) : lockedTile('users', 'PeopleCore', 'Your HR self-service: profile, directory, org chart and approvals.')}
+      ${appAllowed('people') ? appTile('people', '#/people', 'users', 'PeopleCore', 'Your HR self-service: profile, leave, requests, approvals and the company directory.', '<span class="t-meta" id="hrMeta">Open</span>', true)
+        : setting('people_live', false) === true ? lockedTile('users', 'PeopleCore', 'Your HR self-service: profile, leave, requests, approvals and the company directory.')
+        : appTile('people', null, 'users', 'PeopleCore', 'Your HR self-service: profile, leave, requests, approvals and the company directory.', '<span class="t-meta">Coming soon</span>')}
       ${appTile('proforma', null, 'chart', 'Proforma Invoice &amp; Quote', 'Prepare quotes and proforma invoices for clients.', '<span class="t-meta">Coming later</span>')}
     </section>
     <footer class="l-foot">${esc(CFG.COMPANY || '')} · ${esc(CFG.MOTTO || '')}<br><span>${esc(CFG.APP_NAME)} v${esc(CFG.VERSION || '')} · <span class="credit">${esc(CREDIT)}</span></span></footer></div>`;
