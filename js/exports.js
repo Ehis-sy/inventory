@@ -25,7 +25,7 @@ const safeSheet = n => String(n).replace(/[\\/?*[\]:]/g, '').slice(0, 31) || 'Sh
 // ================================================================ EXCEL
 /* sheets: [{ name, title, subtitle, columns:[{header,key,width,type:'num'|'date'|'text',input?}], rows:[obj],
               group?: key, cellStyle?(row,key) -> 'low'|'damaged'|..., totals?: [keys], note? }] */
-async function brandXlsx({ file, sheets, instructions }) {
+async function brandXlsx({ file, sheets, instructions, lists, hidden }) {
   await loadScript('vendor/exceljs.min.js');
   const X = window.ExcelJS; const wb = new X.Workbook();
   wb.creator = 'GANKCO Nest'; wb.created = new Date();
@@ -52,6 +52,7 @@ async function brandXlsx({ file, sheets, instructions }) {
     }
     const cols = sh.columns; const n = cols.length;
     cols.forEach((c, i) => { ws.getColumn(i + 1).width = c.width || 14; });
+    const colL = key => { const i = cols.findIndex(c => c.key === key); let x = i + 1, out = ''; while (x > 0) { const m = (x - 1) % 26; out = String.fromCharCode(65 + m) + out; x = Math.floor((x - 1) / 26); } return out; };
     // header block
     ws.getRow(1).height = 26; ws.getRow(2).height = 18; ws.getRow(3).height = 16; ws.getRow(4).height = 16;
     ws.addImage(logoId, { tl: { col: 0, row: 0.15 }, ext: { width: 210, height: 210 * logo.h / logo.w } });
@@ -129,8 +130,20 @@ async function brandXlsx({ file, sheets, instructions }) {
         if (st && STATUS_FILL[st]) cell.font = { ...cell.font, bold: true, color: { argb: 'FF' + STATUS_FILL[st][1] } };
         if (fill) cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF' + fill } };
         if (c.input) cell.protection = { locked: false };
+        if (c.validate) cell.dataValidation = { type: 'list', allowBlank: true, showErrorMessage: false, formulae: [c.validate(r, colL)] };
       });
       r++; zebra++;
+    }
+    // empty input rows at the bottom (for example new items)
+    for (let k = 0; k < (sh.blankRows || 0); k++) {
+      cols.forEach((c, i) => {
+        const cell = ws.getCell(r, i + 1);
+        cell.border = { bottom: { style: 'hair', color: { argb: 'FF' + BRAND.line } } };
+        cell.font = { name: 'Calibri', size: 10, color: { argb: 'FF' + BRAND.ink } };
+        if (c.input || c.newInput) { cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF' + (c.newInput && !c.input ? 'EAF4EC' : BRAND.input) } }; cell.protection = { locked: false }; }
+        if (c.validate) cell.dataValidation = { type: 'list', allowBlank: true, showErrorMessage: false, formulae: [c.validate(r, colL)] };
+      });
+      r++;
     }
     if (!sh.rows.length) { ws.mergeCells(r, 1, r, n); ws.getCell(r, 1).value = 'No rows.'; ws.getCell(r, 1).font = { italic: true, color: { argb: 'FF' + BRAND.muted } }; r++; }
     if (sh.totals?.length && sh.rows.length) {
@@ -151,6 +164,18 @@ async function brandXlsx({ file, sheets, instructions }) {
     r += 1; ws.getCell(r, 1).value = `${CFG.COMPANY || ''} · ${CFG.MOTTO || ''}`;
     ws.getCell(r, 1).font = { size: 9, italic: true, color: { argb: 'FF' + BRAND.grey } };
     sh._firstData = firstData;
+  }
+  (hidden || []).forEach(h => { const hs = wb.addWorksheet(h.name); hs.state = 'veryHidden'; hs.addRow(h.header); h.rows.forEach(r => hs.addRow(r)); });
+  // valid values for the dropdowns, on a hidden sheet, each list with its own name
+  if (lists?.length) {
+    const ls = wb.addWorksheet('Lists'); ls.state = 'veryHidden';
+    lists.forEach((l, i) => {
+      const col = i + 1; ls.getCell(1, col).value = l.name;
+      const vals = l.values.length ? l.values : [''];
+      vals.forEach((v, j) => { ls.getCell(j + 2, col).value = v; });
+      let x = col, L = ''; while (x > 0) { const m = (x - 1) % 26; L = String.fromCharCode(65 + m) + L; x = Math.floor((x - 1) / 26); }
+      wb.definedNames.add(`Lists!$${L}$2:$${L}$${vals.length + 1}`, l.name);
+    });
   }
   const buf = await wb.xlsx.writeBuffer();
   saveBlob(new Blob([buf], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' }), file);
@@ -178,8 +203,11 @@ async function readXlsx(fileObj) {
         if (v !== null && v !== undefined && String(v).trim() !== '') any = true;
         o[h] = v;
       });
-      if (any && o['App ID'] !== 'Total') out.push(o);
+      const aid = o['App ID']; const aidTxt = aid == null ? '' : String(aid).trim();
+      if (any && aidTxt !== 'Total' && (aidTxt === '' || !isNaN(+aidTxt))) out.push(o);   // group headings and the footer line aren't rows
     });
+    const og = wb.getWorksheet('Original');
+    if (og) { const keys = og.getRow(1).values; out.orig = new Map(); og.eachRow((r, i) => { if (i === 1) return; const o = {}; keys.forEach((k, c) => { if (k && k !== 'ID') { const v = r.getCell(c).value; o[k] = v == null ? '' : String(v); } }); out.orig.set(+r.getCell(1).value, o); }); }
     return out;
   }
   throw new Error('This file doesn’t look like one of the Nest templates (no “App ID” column found). Download a fresh template and try again.');
@@ -426,11 +454,12 @@ async function brandPdf({ file, title, subtitle, orientation = 'landscape', meta
 
 // ================================================================ TEMPLATES & UPLOADS
 const TEMPLATE_INFO = {
+  items: { title: 'Items: add and edit', file: 'Nest_Template_Items' },
   locations: { title: 'Item locations', file: 'Nest_Template_Locations' },
   quantities: { title: 'Quantity corrections', file: 'Nest_Template_Quantities' },
   kits: { title: 'Redress kits & expiry dates', file: 'Nest_Template_Redress_Kits' },
 };
-function templateLines() { const ids = myLineIds(); return S.depts.filter(d => (!S.line || d.id === +S.line) && (isAdmin() || ids.includes(d.id))); }
+function templateLines() { const ids = myLineIds(); return S.depts.filter(d => isAdmin() || ids.includes(d.id)); }
 
 async function downloadTemplate(kind) {
   const its = await items(); await stockRows(true);
@@ -440,6 +469,7 @@ async function downloadTemplate(kind) {
   const scope = lines.length === S.depts.length ? 'All service lines' : lines.map(d => d.short_name || d.name).join(', ');
   const info = TEMPLATE_INFO[kind];
   let sheet, instructions;
+  if (kind === 'items') return downloadItemsTemplate(its);
   if (kind === 'locations') {
     sheet = { name: 'Locations', title: info.title, subtitle: scope, hideFirst: false, group: 'line',
       columns: [{ header: 'App ID', key: 'id', width: 8 }, { header: 'Item Code', key: 'code', width: 24 }, { header: 'Description', key: 'name', width: 52, wrap: true },
@@ -514,6 +544,7 @@ async function previewUpload(kind, rows) {
   const find = r => { const id = +r['App ID']; if (id && byId.has(id)) return byId.get(id); const c = byCode.get(String(r['Item Code'] || '').trim().toLowerCase()); return c && c.length === 1 ? c[0] : null; };
   const locByName = n => S.locs.find(l => l.name.toLowerCase() === String(n || '').trim().toLowerCase());
   const errs = [], ok = [];
+  if (kind === 'items') return previewItemsUpload(rows, byId);
   if (kind === 'locations') {
     const real = realLocs(); const ph = placeholderLoc();
     rows.forEach((r, ix) => {
@@ -575,6 +606,144 @@ function confirmUpload(kind, ok, errs, head, cells, apply, needsReason) {
     onSubmit: async d => {
       if (needsReason && !String(d.reason || '').trim()) throw new Error('Give a reason for this upload.');
       const msg = await apply(String(d.reason || '').trim()); toast(msg); refresh();
+    }
+  });
+}
+
+// ================================================================ 2.9 · ITEMS TEMPLATE: edit what's there, add new items
+const IT_COLS = { id: 'App ID', code: 'Item Code', name: 'Description', svc: 'Service line', sub: 'Sub service line', kind: 'Type', st: 'Sub-type',
+  unit: 'Unit', min: 'Reorder at (min)', max: 'Restock up to (max)', supplier: 'OEM / supplier', notes: 'Notes', team: 'Team (looks after it)' };
+const svcText = l => l ? `${l.code} · ${l.name}` : '';
+async function downloadItemsTemplate(its) {
+  // the items shown on the Inventory page (its filters apply), that you can work on
+  const page = typeof ROUTES.inventory?.filtered === 'function' && ROUTES.inventory.rows ? ROUTES.inventory.filtered() : its.filter(i => i.active);
+  const mine = page.filter(i => i.active && canAct(i.department_id));
+  const real = realLocs();
+  const kOrd = Object.keys(KINDS);
+  const subOrd = id => { const sl = svcById(id); const m = sl && svcById(sl.parent_id); return m ? m.sort * 1000 + sl.sort : 1e9; };
+  const rows = mine.slice().sort((a, b) => subOrd(a.sub_line_id) - subOrd(b.sub_line_id) || kOrd.indexOf(a.kind) - kOrd.indexOf(b.kind) || String(a.subtype || '').localeCompare(String(b.subtype || '')) || String(a.code || '').localeCompare(String(b.code || '')))
+    .map(i => ({ id: i.id, ...itemTexts(i), team: i.line || '' }));
+  const majors = svcMajors();
+  const lists = [{ name: 'ServiceLines', values: majors.map(svcText) },
+    ...majors.map(m => ({ name: 'SL_' + m.code, values: svcSubs(m.id).map(x => x.name) })),
+    { name: 'Types', values: Object.values(KINDS) },
+    ...Object.keys(KINDS).map((k, i) => ({ name: 'ST_' + (i + 1), values: subtypesOf(k).map(t => t.name) }))];
+  const columns = [{ header: IT_COLS.id, key: 'id', width: 8 }, { header: IT_COLS.code, key: 'code', width: 26, input: true }, { header: IT_COLS.name, key: 'name', width: 46, wrap: true, input: true },
+    { header: IT_COLS.svc, key: 'svc', width: 30, input: true, validate: () => 'ServiceLines' },
+    { header: IT_COLS.sub, key: 'sub', width: 34, input: true, validate: (r, col) => `INDIRECT("SL_"&LEFT($${col('svc')}${r},FIND(" ",$${col('svc')}${r}&" ")-1))` },
+    { header: IT_COLS.kind, key: 'kind', width: 22, input: true, validate: () => 'Types' },
+    { header: IT_COLS.st, key: 'st', width: 28, input: true, validate: (r, col) => `INDIRECT("ST_"&MATCH($${col('kind')}${r},Types,0))` },
+    { header: IT_COLS.unit, key: 'unit', width: 8, input: true }, { header: IT_COLS.min, key: 'min', width: 10, type: 'num', input: true }, { header: IT_COLS.max, key: 'max', width: 10, type: 'num', input: true },
+    { header: IT_COLS.supplier, key: 'supplier', width: 20, input: true }, { header: IT_COLS.notes, key: 'notes', width: 28, wrap: true, input: true },
+    { header: IT_COLS.team, key: 'team', width: 16 },
+    ...real.map(l => ({ header: `Opening qty: ${l.name}`, key: 'O' + l.id, width: 12, type: 'num', newInput: true }))];
+  const sheet = { name: 'Items', title: TEMPLATE_INFO.items.title, subtitle: `${plural(rows.length, 'item')} · ${CFG.COMPANY || ''}`, columns, rows, blankRows: 150,
+    note: 'Change any orange cell, or add new items in the empty rows at the bottom (leave App ID blank). Only what you change is saved. Opening quantities (green) are for new items only.' };
+  const instructions = ['How to use the items template',
+    '1. Each row is one item. To change an item, edit its orange cells: code, description, service line, sub service line, type, sub-type, unit, reorder levels, supplier or notes.',
+    '2. Use the dropdowns. The Sub service line list follows the Service line you chose, and the Sub-type list follows the Type.',
+    '3. To add items, fill in an empty row at the bottom and leave App ID blank. Description, Service line, Sub service line and Type are needed. Put the opening quantity in the store columns (green), if any.',
+    '4. Don’t change the App ID column: Nest uses it to find each item. Quantities of existing items are changed with the Quantity corrections template, not here.',
+    '5. Moving an item into another team’s sub service line hands it to that team, and its admins get a bell alert.',
+    '6. Save the file, then in Nest go to Inventory → Excel templates → Upload a filled template. You’ll see every change before anything is saved.',
+    isAdmin() ? 'As an admin, changes to items your team looks after apply when you confirm them.' : 'Your changes go to your team’s admin for approval as one request.'];
+  // what each item looked like when the file was made: on upload, only cells you changed count, and changes made in Nest since are kept
+  const original = { name: 'Original', header: ['ID', ...IT_KEYS], rows: rows.map(r => [r.id, ...IT_KEYS.map(k => String(r[k] ?? ''))]) };
+  await brandXlsx({ file: `${TEMPLATE_INFO.items.file}_${localISO(0)}.xlsx`, sheets: [sheet], instructions, lists, hidden: [original] });
+}
+const IT_KEYS = ['code', 'name', 'svc', 'sub', 'kind', 'st', 'unit', 'min', 'max', 'supplier', 'notes'];
+const itemTexts = i => ({ code: i.code || '', name: i.name, svc: svcText(svcById(i.svc_line_id)), sub: i.sub_line || '', kind: kindLabel(i.kind), st: i.subtype || '',
+  unit: i.unit || 'pcs', min: i.min_qty ?? '', max: i.max_qty ?? '', supplier: i.supplier || '', notes: i.notes || '' });
+
+function previewItemsUpload(rows, byId) {
+  const errs = [], ok = []; const real = realLocs();
+  const s = v => (v == null ? '' : String(v)).trim();
+  const majorOf = t => { t = s(t).toLowerCase(); if (!t) return null; const code = t.split(/\s*[·\-–]\s*|\s+/)[0]; return svcMajors(true).find(m => m.code.toLowerCase() === code || m.name.toLowerCase() === t || svcText(m).toLowerCase() === t) || null; };
+  const subOf = (m, t) => { t = s(t).toLowerCase(); if (!t) return null; const subs = m ? svcSubs(m.id, true) : (S.svc || []).filter(x => x.parent_id); return subs.find(x => x.name.toLowerCase() === t) || null; };
+  const kindOf = t => { t = s(t).toLowerCase(); if (!t) return null; const alias = { equipment: 'rental', rental: 'rental', 'rental item': 'rental', sales: 'sales', 'sales item': 'sales', consumable: 'consumable', consumables: 'consumable', asset: 'asset', 'company tools': 'asset' };
+    return Object.keys(KINDS).find(k => KINDS[k].toLowerCase() === t) || alias[t] || null; };
+  const stOf = (k, t) => { t = s(t).toLowerCase(); if (!t) return null; return subtypesOf(k, true).find(x => x.name.toLowerCase() === t) || null; };
+  const numOf = v => s(v) === '' ? null : +String(v).replace(/,/g, '');
+  const mineSingle = !isSuper() && myLineIds().length === 1 ? myLineIds()[0] : null;
+  rows.forEach((r, ix) => {
+    const label = s(r[IT_COLS.code]) || s(r[IT_COLS.name]) || `row ${ix + 1}`;
+    const idTxt = s(r[IT_COLS.id]);
+    const m = majorOf(r[IT_COLS.svc]); const sub = subOf(m, r[IT_COLS.sub]);
+    const k = kindOf(r[IT_COLS.kind]); const st = k ? stOf(k, r[IT_COLS.st]) : null;
+    if (s(r[IT_COLS.svc]) && !m) return errs.push(`${label}: service line “${s(r[IT_COLS.svc])}” not recognised`);
+    if (s(r[IT_COLS.sub]) && !sub) return errs.push(`${label}: sub service line “${s(r[IT_COLS.sub])}” isn’t under ${m ? m.code : 'that service line'}`);
+    if (s(r[IT_COLS.kind]) && !k) return errs.push(`${label}: type “${s(r[IT_COLS.kind])}” not recognised (use ${Object.values(KINDS).join(', ')})`);
+    if (s(r[IT_COLS.st]) && !st) return errs.push(`${label}: sub-type “${s(r[IT_COLS.st])}” isn’t a sub-type of ${k ? KINDS[k] : 'that type'}`);
+    const mn = numOf(r[IT_COLS.min]), mx = numOf(r[IT_COLS.max]);
+    if ((mn !== null && (isNaN(mn) || mn < 0)) || (mx !== null && (isNaN(mx) || mx < 0))) return errs.push(`${label}: reorder levels must be numbers, 0 or more`);
+    if (idTxt) {
+      const it = byId.get(+idTxt); if (!it) return errs.push(`${label}: App ID ${idTxt} not found`);
+      const norm = v => String(v ?? '').trim().replace(/\s+/g, ' ').toLowerCase();
+      const file = { code: r[IT_COLS.code], name: r[IT_COLS.name], svc: r[IT_COLS.svc], sub: r[IT_COLS.sub], kind: r[IT_COLS.kind], st: r[IT_COLS.st], unit: r[IT_COLS.unit],
+        min: r[IT_COLS.min], max: r[IT_COLS.max], supplier: r[IT_COLS.supplier], notes: r[IT_COLS.notes] };
+      const now = itemTexts(it); const orig = rows.orig?.get(it.id);
+      const numEq = (x, y) => (s(x) === '' && s(y) === '') || (s(x) !== '' && s(y) !== '' && +String(x).replace(/,/g, '') === +String(y).replace(/,/g, ''));
+      const same = (k, x, y) => ['min', 'max'].includes(k) ? numEq(x, y) : norm(x) === norm(y);
+      // a cell counts as changed when it differs from the file as downloaded (or from Nest, for a file without that record)
+      const edited = k => !same(k, file[k], orig ? orig[k] : now[k]);
+      const conflicts = [];
+      const take = k => { if (!edited(k)) return false; if (orig && !same(k, orig[k], now[k])) { conflicts.push(`${k === 'st' ? 'sub-type' : k === 'sub' || k === 'svc' ? 'sub service line' : k}: now “${now[k] || '—'}” in Nest`); return false; } return true; };
+      const ch = {}; const was = [];
+      const push = (key, show, from, to) => { ch[key] = to.v; was.push([show, from, to.t]); };
+      if (take('code')) push('code', 'Code', now.code || '—', { v: s(file.code) || null, t: s(file.code) || '—' });
+      if (take('name')) { if (!s(file.name)) return errs.push(`${label}: the description can’t be empty`); push('name', 'Description', now.name, { v: s(file.name), t: s(file.name) }); }
+      if (take('svc') | take('sub')) { if (!sub) return errs.push(`${label}: choose the sub service line`); if (sub.id !== it.sub_line_id) push('sub_line_id', 'Sub service line', svcLabel(it.sub_line_id), { v: sub.id, t: svcLabel(sub.id) }); }
+      if (take('kind')) { if (!k) return errs.push(`${label}: choose the type`); if (k !== it.kind) push('kind', 'Type', kindLabel(it.kind), { v: k, t: kindLabel(k) }); }
+      if (take('st') || ('kind' in ch && s(file.st))) { const nk = ch.kind || it.kind; const t2 = s(file.st) ? stOf(nk, file.st) : null;
+        if (s(file.st) && !t2) return errs.push(`${label}: sub-type “${s(file.st)}” isn’t a sub-type of ${KINDS[nk]}`);
+        if ((t2 ? t2.id : null) !== (it.subtype_id ?? null)) push('subtype_id', 'Sub-type', it.subtype || '—', { v: t2 ? t2.id : null, t: t2 ? t2.name : '—' }); }
+      if (take('unit')) push('unit', 'Unit', now.unit, { v: s(file.unit) || 'pcs', t: s(file.unit) || 'pcs' });
+      if (take('min')) push('min_qty', 'Reorder at', now.min === '' ? '—' : now.min, { v: mn, t: mn ?? '—' });
+      if (take('max')) push('max_qty', 'Restock up to', now.max === '' ? '—' : now.max, { v: mx, t: mx ?? '—' });
+      if (take('supplier')) push('supplier', 'Supplier', now.supplier || '—', { v: s(file.supplier) || null, t: s(file.supplier) || '—' });
+      if (take('notes')) push('notes', 'Notes', now.notes || '—', { v: s(file.notes) || null, t: s(file.notes) || '—' });
+      if (conflicts.length) errs.push(`${label}: not changed where Nest already changed since the file was downloaded (${conflicts.join('; ')})`);
+      if (!Object.keys(ch).length) return;
+      if (ch.kind && +it.qty_out > 0) return errs.push(`${label}: it’s out on a job, so its type can’t change until it’s back`);
+      const nmn = 'min_qty' in ch ? ch.min_qty : it.min_qty, nmx = 'max_qty' in ch ? ch.max_qty : it.max_qty;
+      if (nmn != null && nmx != null && +nmx < +nmn) return errs.push(`${label}: restock up to (max) must be at least the reorder level`);
+      const route = canAdmin(it.department_id) ? 'apply' : (role() === 'staff' && inLine(it.department_id)) ? 'approval' : null;
+      if (!route) return errs.push(`${label}: only ${lineName(it.department_id)} admins can change this item`);
+      const toTeam = ch.sub_line_id && svcById(ch.sub_line_id)?.department_id;
+      ok.push({ row: { id: it.id, ...ch }, label: `${it.code ? it.code + ' ' : ''}${it.name}`, changes: was, route, team: lineName(it.department_id), moveTo: toTeam && toTeam !== it.department_id ? lineName(toTeam) : '' });
+    } else {
+      if (!s(r[IT_COLS.name])) return errs.push(`Row ${ix + 1}: a new item needs a description`);
+      if (!sub) return errs.push(`${label}: choose the service line and sub service line`);
+      if (!k) return errs.push(`${label}: choose the type`);
+      if (mn !== null && mx !== null && mx < mn) return errs.push(`${label}: restock up to (max) must be at least the reorder level`);
+      const dept = sub.department_id || mineSingle;
+      if (!dept) return errs.push(`${label}: ${sub.name} has no team yet. Set one in Nest settings → Service lines first.`);
+      const stock = []; for (const l of real) { const v = numOf(r[`Opening qty: ${l.name}`]); if (v === null || v === 0) continue; if (isNaN(v) || v < 0) return errs.push(`${label}: opening qty for ${l.name} must be a number, 0 or more`); stock.push({ location_id: l.id, qty: v }); }
+      const route = canAdmin(dept) ? 'apply' : (role() === 'staff' && inLine(dept)) ? 'approval' : null;
+      if (!route) return errs.push(`${label}: only ${lineName(dept)} admins can add items there`);
+      ok.push({ row: { code: s(r[IT_COLS.code]) || null, name: s(r[IT_COLS.name]), sub_line_id: sub.id, kind: k, subtype_id: st ? st.id : null, unit: s(r[IT_COLS.unit]) || 'pcs',
+        min_qty: mn, max_qty: mx, supplier: s(r[IT_COLS.supplier]) || null, notes: s(r[IT_COLS.notes]) || null, stock },
+        label: `${s(r[IT_COLS.code]) ? s(r[IT_COLS.code]) + ' ' : ''}${s(r[IT_COLS.name])}`, isNew: true, route, team: lineName(dept),
+        changes: [['New item', '', `${svcLabel(sub.id)} · ${KINDS[k]}${st ? ' · ' + st.name : ''}${stock.length ? ' · opening ' + stock.map(x => `${fq(x.qty)} at ${locName(x.location_id)}`).join(', ') : ''}`]] });
+    }
+  });
+  const nApply = ok.filter(o => o.route === 'apply').length, nAsk = ok.length - nApply;
+  return modal({
+    title: 'Check: items', wide: true, submit: ok.length ? (nAsk && !nApply ? 'Send for approval' : nAsk ? 'Apply and send the rest for approval' : 'Apply changes') : null,
+    sub: `${plural(ok.filter(o => !o.isNew).length, 'item')} changed · ${plural(ok.filter(o => o.isNew).length, 'new item')}${errs.length ? ` · ${plural(errs.length, 'row')} need fixing` : ''}.`,
+    body: `${errs.length ? `<div class="notice bad"><b>These rows can’t be saved yet</b>. Fix them in the file and upload it again, or carry on without them.<ul class="errlist">${errs.slice(0, 40).map(e => `<li>${esc(e)}</li>`).join('')}${errs.length > 40 ? `<li>…and ${errs.length - 40} more</li>` : ''}</ul></div>` : ''}
+      ${ok.length ? `<div class="tablewrap" style="max-height:48vh"><table class="t itprev"><thead><tr><th>Item</th><th>What changes</th><th>Team</th><th></th></tr></thead><tbody>
+        ${ok.slice(0, 600).map(o => `<tr class="${o.isNew ? 'isnew' : ''}"><td><b>${esc(o.label)}</b></td>
+          <td>${o.changes.map(([f, a, b]) => o.isNew ? `<span class="itchg new">${esc(b)}</span>` : `<span class="itchg"><span class="sub">${esc(f)}:</span> ${String(a) === '—' || String(a) === '' ? '<span class="sub">(blank)</span>' : `<s>${esc(String(a))}</s>`} → <b>${String(b) === '—' ? '(blank)' : esc(String(b))}</b></span>`).join('')}</td>
+          <td class="sub">${esc(o.team)}${o.moveTo ? ` → <b>${esc(o.moveTo)}</b>` : ''}</td><td>${o.route === 'apply' ? chip('ok', 'Saves now') : chip('pending', 'Needs approval')}</td></tr>`).join('')}</tbody></table></div>
+        ${nAsk ? `<label class="f mt">Note for your admin<input type="text" name="reason" required placeholder="e.g. new tools received in Warri"></label>` : ''}`
+        : '<div class="empty">Nothing to change: the file matches what’s in Nest.</div>'}`,
+    onSubmit: async d => {
+      if (nAsk && !String(d.reason || '').trim()) throw new Error('Add a short note for your admin.');
+      const res = await q(sb.rpc('item_bulk', { p_rows: ok.map(o => o.row), p_reason: String(d.reason || '').trim() || 'Items template' }));
+      const done = res.find(x => x.state === 'approved'); const pend = res.filter(x => x.state === 'pending');
+      toast([done ? `Saved ${plural(done.changed, 'change')}${done.created ? `, added ${plural(done.created, 'item')}` : ''}` : '', pend.length ? `Sent ${plural(pend.reduce((a, x) => a + x.rows, 0), 'row')} for approval` : ''].filter(Boolean).join(' · ') || 'Done');
+      invalidate(); refresh();
     }
   });
 }

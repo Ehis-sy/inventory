@@ -993,3 +993,35 @@ table.cv td:first-child { white-space: nowrap; }
 .sortnote .linkbtn { margin-left: 6px; font-size: 13px; color: var(--brand-deep); }
 .po-filters .po-msort { display: none; }
 @media (max-width: 760px) { .po-filters .po-msort { display: block; max-width: none; flex: 1 1 100%; } }
+
+/* 2.9 · locked app tile (no access) */
+.tile.locked { cursor: not-allowed; background: rgba(255,255,255,.03); border: 1px dashed rgba(255,255,255,.22); }
+.tile.locked .t-ico, .tile.locked .t-desc { opacity: .45; filter: grayscale(1); }
+.tile.locked .t-name { opacity: .7; display: inline-flex; align-items: center; gap: 8px; }
+.tile.locked .t-lock svg { width: 18px; height: 18px; }
+.tile.locked .t-meta { margin-top: auto; color: rgba(255,255,255,.72); font-weight: 600; }
+
+/* 2.9 · inventory filters, Move to, items template preview, service lines and sub-types */
+.invfilters select { min-width: 0; flex: 1 1 180px; max-width: 280px; }
+.filters .check.inline { display: inline-flex; align-items: center; gap: 6px; margin: 0; font-size: 14px; white-space: nowrap; }
+.notice.small { font-size: 13px; padding: 8px 12px; display: flex; gap: 8px; align-items: center; }
+.notice.small svg { width: 16px; height: 16px; flex: none; }
+.itprev td { vertical-align: top; }
+.itchg { display: block; font-size: 13px; line-height: 1.45; color: var(--ink); }
+.itchg s { color: var(--muted); }
+.itchg.new { color: #1E6B3A; font-weight: 600; }
+tr.isnew td:first-child { box-shadow: inset 3px 0 0 #2E8B57; }
+.svcmajor { border: 1px solid var(--line); border-radius: 12px; margin-top: 14px; overflow: hidden; }
+.svcmajor.archived, .svcsub.archived, .stcol li.archived { opacity: .6; }
+.svchead { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; padding: 10px 14px; background: #F7F9FA; border-bottom: 1px solid var(--line); }
+.svchead .end, .svcsub .end, .stcol .end { margin-left: auto; display: inline-flex; align-items: center; gap: 4px; flex-wrap: wrap; }
+.svcsubs { margin: 0; }
+.svcsub { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+.svcsub .grow, .stcol .grow { flex: 1 1 200px; min-width: 0; }
+.svcteam { display: inline-flex; align-items: center; gap: 6px; margin: 0; }
+.svcteam select { min-height: 34px; padding: 4px 8px; max-width: 220px; }
+.stgrid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; margin-top: 10px; }
+.stcol { border: 1px solid var(--line); border-radius: 12px; padding: 12px 14px; }
+.stcol .sthead { display: flex; flex-direction: column; gap: 2px; margin-bottom: 6px; }
+.stcol .list.compact li { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+@media (max-width: 900px) { .stgrid { grid-template-columns: 1fr; } }

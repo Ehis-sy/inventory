@@ -1,4 +1,4 @@
-# GANKCO Nest: version 2.8.1 update
+# GANKCO Nest: version 2.9 update
 
 *Built to support engineered solutions.*
 
@@ -9,9 +9,55 @@
 - **Emails:** sent by Brevo from **nest-alerts@gankcoenergy.com** as "GANKCO Nest". Sign-in emails use Supabase's custom SMTP (templates in Supabase → Authentication → Emails → Templates). Alert emails use the Brevo API key saved in Supabase Vault as `brevo_api_key`, on a schedule (pg_cron).
 - **DNS (company IT):** `nest` CNAME → `gankco-energy.github.io`, plus the Brevo verification records.
 
-## Install 2.8.1 (about 5 minutes)
+## Install 2.9 (about 10 minutes)
 
 1. **Lock Nest:** **Nest admin → Nest settings → Maintenance → Schedule maintenance → All of Nest → Start now**.
+2. **Supabase → SQL Editor → New query:** paste all of **`14-nest-v2.9-upgrade.sql`** and press **Run**. It should end with **Nest 2.9 installed**. It's safe to run again: items that already have a place are never moved again.
+3. **GitHub:** unzip **`gankco-nest-v2.9.zip`** and upload everything into **github.com/gankco-energy/gankco-nest**, then commit. Keep the `CNAME` file.
+4. Reload Nest (**Ctrl + Shift + R**). The bottom of each page shows **v2.9**.
+5. **Check, as the Super Admin:**
+   - **Inventory:** the four filters at the top (Service line, Sub service line, Type, Sub-type). Every item has a place; the line under each description shows it, for example *WI · Wireline Services · Slickline Downhole Tools*.
+   - **Nest admin → Nest settings → Service lines:** the team for each sub service line. Set a team for any sub line that will get items (Cased Hole Logging, Well Testing and so on).
+   - **Inventory → Inventory settings → Types & sub-types.**
+6. Press **End maintenance**.
+
+### What's new in 2.9
+
+**Inventory filters**
+- **Service line → Sub service line → Type → Sub-type.** The sub line list follows the service line, and the sub-type list follows the type (picking a sub-type on its own sets its type). **Redress kits only** is a tick box; **Clear filters** resets them.
+- The service-line buttons at the top of Inventory are gone. The table columns are the same (code, description, each store, out, status, total).
+- **Excel and PDF exports** are grouped by sub service line, then type and sub-type, and say which filters were used.
+
+**Types and sub-types (they replace categories)**
+- Four types: **Sales items** (leave for good), **Rental items** (go out on jobs and come back), **Consumables** (used up) and **Company tools & assets** (go out and come back, for now). The type decides how an item behaves on jobs.
+- Sub-types under each type, from your alignment sheet. **Inventory settings → Types & sub-types** (Super Admin and admins): add, rename, reorder, archive, or delete one that no item uses.
+- Every item was moved to its new place from the sheet you filled in (categories, the 96 single items, and the 75 Job planner items by name). The Audit log isn't flooded: placing items isn't an edit.
+
+**Service lines: one list for Inventory and PO**
+- **Nest admin → Nest settings → Service lines** (Super Admin): add, rename, reorder or archive service lines and sub lines, and choose the **team** for each sub line (that team's admins look after its items and approve changes). Changing a sub line's team hands its items to the new team.
+- **FLM & SLM** (was First- & Second-Line Maintenance Service), in both apps.
+- **Company-wide → Quality, Health, Safety & Environment** for QHSE items. It isn't offered on POs.
+- A main line's code can't change once POs have been issued with it.
+
+**Moving items (admins)**
+- Tick items → **Move to…** → service line, sub line, type and sub-type ("No change" leaves a field as it is). **Edit item** does the same for one item.
+- Admins can move items into **another team's** sub line; that team's admins get a bell alert and the items become theirs.
+- An item's type can't change while some of it is out on a job.
+- The item's **History** shows each move (old → new, who, when); the Audit log has it too.
+
+**Bulk items template** (Inventory → Excel templates → *Items: add and edit*)
+- Download: every item shown on the Inventory page (set the filters first to narrow it), with dropdowns for service line, sub line, type and sub-type, plus 150 empty rows for new items with an opening quantity per store.
+- Upload: a preview shows every change as old → new, new items in green, and rows to fix in red. Only cells you changed count: if something was changed in Nest after you downloaded the file, Nest keeps that change and tells you.
+- Admins' changes save straight away. **Staff uploads go to their team's admin** as one request in **Approvals**, and are applied when approved. No prices in the template.
+
+**Fixes**
+- **PDF and Excel downloads work on every computer.** Some browser add-ons put a "script loader" on every web page, which took the PDF tool away from Nest (*"Cannot read properties of undefined (reading 'jsPDF')"*). Nest now loads its tools so add-ons can't interfere, and a tool that fails to load (slow internet) is tried again on the next press.
+- **Locked app tiles:** someone without Inventory (or Purchase Order) access sees the tile greyed out with a lock and *"You don't have access. Ask the Nest admin."*
+
+**Supabase advisors after 2.9:** about eight more *"signed-in users can execute security definer function"* warnings for the new buttons (Move to, Save item, bulk template, sub-types, service lines). They're by design, like the others.
+
+## Install 2.8.1 (already done, for reference)
+. **Lock Nest:** **Nest admin → Nest settings → Maintenance → Schedule maintenance → All of Nest → Start now**.
 2. **Supabase → SQL Editor → New query:** paste all of **`13-nest-v2.8.1-upgrade.sql`** and press **Run**. It should end with **Nest 2.8.1 installed**. It's safe to run again. (It already contains the 2.8.1 security fix, so it doesn't matter whether `12-nest-v2.8.1-security-fix.sql` was run first.)
 3. **GitHub:** unzip **`gankco-nest-v2.8.1.zip`** and upload everything into **github.com/gankco-energy/gankco-nest**, then commit. Keep the `CNAME` file.
 4. Reload Nest (**Ctrl + Shift + R**). The version at the bottom of each page shows v2.8.1.

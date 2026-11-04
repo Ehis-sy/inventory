@@ -509,7 +509,7 @@ async function countSheetPdf(c, lines) {
 }
 
 // ================================================================ APPROVALS
-const BATCH_KIND = { edit: 'Quantity changes', count: 'Monthly count', kits: 'Redress kit details' };
+const BATCH_KIND = { edit: 'Quantity changes', count: 'Monthly count', kits: 'Redress kit details', items: 'Item details' };
 ROUTES.approvals = {
   async load() {
     const v = S.appr.view;
@@ -518,11 +518,12 @@ ROUTES.approvals = {
     if (!isAdmin()) qb = qb.eq('submitted_by', S.profile.id);
     let rows = await q(qb);
     if (S.line) rows = rows.filter(b => b.department_id === +S.line);
+    if (rows.some(b => b.kind === 'items')) await items();
     this.rows = rows; S.appr.sel = new Set([...S.appr.sel].filter(id => rows.some(r => r.id === id)));
     const mrs = isAdmin() && v === 'pending' ? (await q(sb.from('jobs').select('id,job_no,title,requester_name,submitted_at,job_sections(department_id,state)').in('status', ['submitted', 'partial'])))
       .filter(j => (j.job_sections || []).some(s => s.state === 'pending' && canAdmin(s.department_id) && (!S.line || s.department_id === +S.line))) : [];
     const groups = S.depts.map(d => ({ d, bs: rows.filter(b => b.department_id === d.id) })).filter(g => g.bs.length);
-    return topbar(isAdmin() ? 'Approvals' : 'My requests', isAdmin() ? 'Quantity changes, monthly counts and kit details from staff. Approve one by one, in bulk, or a whole service line at once.' : 'Changes you sent for approval, and what happened to them.') +
+    return topbar(isAdmin() ? 'Approvals' : 'My requests', isAdmin() ? 'Quantity changes, monthly counts, kit and item details from staff. Approve one by one, in bulk, or a whole service line at once.' : 'Changes you sent for approval, and what happened to them.') +
       lineChips() + `<div class="filters"><div class="seg" id="seg">${[['pending', 'Waiting'], ['done', 'Decided']].map(([k, l]) => `<button data-v="${k}" class="${v === k ? 'on' : ''}">${l}</button>`).join('')}</div></div>
       ${mrs.length ? `<section class="panel"><header><h2>Materials requests to approve &amp; issue</h2><span class="meta">${mrs.length}</span></header><ul class="list">
         ${mrs.map(j => `<li><a class="main" href="#/job/${j.id}"><div class="name">${tag(j.job_no)} ${esc(j.title)}</div><div class="sub">${esc(j.requester_name || '')} · submitted ${fdt(j.submitted_at)} · waiting: ${j.job_sections.filter(s => s.state === 'pending' && canAdmin(s.department_id)).map(s => lineShort(s.department_id)).join(', ')}</div></a>
@@ -564,11 +565,23 @@ ROUTES.approvals = {
     drawBulk();
   }
 };
+// a staff items request: what each row adds or changes
+function itemBatchTable(rows) {
+  const its = new Map((S.items || []).map(i => [i.id, i]));
+  const F = { code: 'Code', name: 'Description', sub_line_id: 'Sub service line', kind: 'Type', subtype_id: 'Sub-type', unit: 'Unit', min_qty: 'Reorder at', max_qty: 'Restock up to', supplier: 'Supplier', notes: 'Notes' };
+  const v = (k, x) => x == null || x === '' ? '—' : k === 'sub_line_id' ? svcLabel(x) : k === 'kind' ? kindLabel(x) : k === 'subtype_id' ? subtypeName(x) : String(x);
+  return `<table class="t"><thead><tr><th>Item</th><th>Change</th></tr></thead><tbody>${rows.slice(0, 200).map(r => {
+    const it = r.id ? its.get(+r.id) : null;
+    const what = r.id ? Object.keys(F).filter(k => k in r).map(k => `<span class="itchg"><span class="sub">${F[k]}:</span> ${it ? `<s>${esc(v(k, it[k]))}</s> → ` : ''}<b>${esc(v(k, r[k]))}</b></span>`).join('')
+      : `<span class="itchg new">New item · ${esc(svcLabel(r.sub_line_id))} · ${esc(kindLabel(r.kind))}${r.subtype_id ? ' · ' + esc(subtypeName(r.subtype_id)) : ''}${(r.stock || []).length ? ' · opening ' + r.stock.map(x => `${fq(x.qty)} at ${esc(locName(x.location_id))}`).join(', ') : ''}</span>`;
+    return `<tr><td>${it ? `${tag(it.code)} ${esc(it.name)}` : `<b>${esc(r.code ? r.code + ' ' : '')}${esc(r.name || '')}</b>`}</td><td>${what}</td></tr>`; }).join('')}</tbody></table>`;
+}
 function batchCard(b, canDecide) {
   const lines = b.change_lines || [];
-  const kindChip = b.kind === 'count' ? chip('out', 'Monthly count') : b.kind === 'kits' ? chip('reserved', 'Kit details') : chip('muted', 'Quantity changes');
+  const kindChip = b.kind === 'count' ? chip('out', 'Monthly count') : b.kind === 'kits' ? chip('reserved', 'Kit details') : b.kind === 'items' ? chip('reserved', 'Item details') : chip('muted', 'Quantity changes');
   const stateChip = b.state === 'pending' ? chip('pending', 'Waiting') : chip(b.state === 'rejected' ? 'rejected' : 'approved', b.state);
-  const body = b.kind === 'kits'
+  const body = b.kind === 'items' ? itemBatchTable(b.payload || [])
+    : b.kind === 'kits'
     ? `<table class="t"><thead><tr><th>Kit</th><th>Kit no.</th><th>Component</th><th>Expiry</th></tr></thead><tbody>${(b.payload || []).slice(0, 80).map(r => { const it = (S.items || []).find(i => i.id === +r.item_id); return `<tr><td>${tag(it?.code)} ${esc(it?.name || '')}</td><td>${esc(r.kit_no)}</td><td>${esc(r.component || '—')}</td><td>${r.expiry_on ? fd(r.expiry_on) : 'No expiry'}</td></tr>`; }).join('')}</tbody></table>`
     : lines.length ? `<table class="t"><thead><tr><th>Item</th><th>Location</th><th class="num">Was</th><th class="num">Now</th><th>Reason</th>${canDecide && b.kind === 'edit' ? '<th></th>' : '<th></th>'}</tr></thead><tbody>
       ${lines.map(l => `<tr><td>${tag(l.items?.code)} ${esc(l.items?.name)}</td><td>${esc(locName(l.location_id))}${l.status !== 'available' ? ` (${STATUS[l.status].toLowerCase()})` : ''}</td>
@@ -580,7 +593,7 @@ function batchCard(b, canDecide) {
       <div class="bt"><div>${kindChip} ${stateChip} <b>${esc(b.submitted_by_name || 'Someone')}</b> <span class="sub">${fdt(b.submitted_at)} · #${b.id}</span></div>
       <div class="sub">“${esc(b.reason || '')}”${b.decided_by_name ? ` · ${b.state} by ${esc(b.decided_by_name)} ${fdt(b.decided_at)}` : ''}${b.decision_note ? ` · ${esc(b.decision_note)}` : ''}</div></div>
       ${canDecide ? `<div class="right"><button class="btn small primary" data-ok="${b.id}">Approve</button><button class="btn small" data-no="${b.id}">Reject</button></div>` : ''}</div>
-    <details ${lines.length <= 6 || b.kind === 'kits' ? 'open' : ''}><summary>${b.kind === 'kits' ? plural((b.payload || []).length, 'row') : plural(lines.length, 'change')}</summary><div class="tablewrap">${body}</div></details></article>`;
+    <details ${lines.length <= 6 || b.kind === 'kits' || b.kind === 'items' ? 'open' : ''}><summary>${b.kind === 'kits' || b.kind === 'items' ? plural((b.payload || []).length, 'row') : plural(lines.length, 'change')}</summary><div class="tablewrap">${body}</div></details></article>`;
 }
 
 // ================================================================ CERTIFICATES & KITS

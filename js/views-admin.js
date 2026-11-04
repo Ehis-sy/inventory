@@ -208,9 +208,7 @@ ROUTES.locations = {
         <td class="num nowrap"><a class="btn small" href="#/inventory" data-filter="${l.id}">View stock</a>${l.is_placeholder ? '' : ` <button class="btn small link" data-edit="${l.id}">Edit</button>`}${!by[l.id] && !l.is_placeholder ? ` <button class="btn small link danger" data-delloc="${l.id}">Delete</button>` : ''}</td></tr>`).join('')}
       </tbody></table></section>
       ${placeholderLoc() && by[placeholderLoc().id] ? `<div class="notice">${plural(by[placeholderLoc().id].items.size, 'item')} still have no location. Staff can place them from Inventory (select items → Move location) or with the Locations Excel template.</div>` : ''}
-      <div class="topbar" style="margin-top:28px"><div><h1 style="font-size:22px">Service lines & categories</h1></div></div>
-      <div class="cols">${S.depts.map(d => `<section class="panel"><header><h2>${esc(d.name)}</h2>${canAdmin(d.id) ? `<div class="right"><button class="btn small" data-addcat="${d.id}">${ico('plus')}Category</button></div>` : ''}</header>
-        <ul class="list">${S.cats.filter(c => c.department_id === d.id).map(c => `<li><span>${esc(c.name)}</span>${canAdmin(d.id) ? `<span class="end"><button class="btn small link" data-cat="${c.id}">Rename</button></span>` : ''}</li>`).join('') || '<li class="muted">No categories</li>'}</ul></section>`).join('')}</div>`;
+      <div class="notice">Types and sub-types (which used to be categories) are in <a href="#/invsettings">Inventory settings</a>. Service lines are in <a href="#/settings#svc">Nest settings</a>.</div>`;
   },
   bind(main) {
     if (!isAdmin()) return;
@@ -235,10 +233,6 @@ ROUTES.locations = {
       try { await q(sb.rpc('delete_location', { p_id: l.id })); toast(`${l.name} deleted`); await loadLookups(); render({ quiet: true }); } catch (e) { toast(niceError(e), true); }
     });
     $$('[data-filter]', main).forEach(b => b.onclick = () => { Object.assign(S.inv, { loc: b.dataset.filter, view: 'all', cat: '', q: '' }); });
-    $$('[data-addcat]', main).forEach(b => b.onclick = () => modal({ title: 'Add category', submit: 'Add', body: '<label class="f">Name<input type="text" name="name" required></label>',
-      onSubmit: async x => { if (!x.name.trim()) throw new Error('Enter a name.'); await q(sb.from('categories').insert({ department_id: +b.dataset.addcat, name: x.name.trim(), sort: 999 })); toast('Category added'); render({ quiet: true }); } }));
-    $$('[data-cat]', main).forEach(b => { const c = S.cats.find(x => x.id === +b.dataset.cat); b.onclick = () => modal({ title: 'Rename category', submit: 'Save', body: `<label class="f">Name<input type="text" name="name" value="${esc(c.name)}" required></label>`,
-      onSubmit: async x => { await q(sb.from('categories').update({ name: x.name.trim() }).eq('id', c.id)); toast('Renamed'); invalidate(); render({ quiet: true }); } }); });
   }
 };
 
@@ -348,14 +342,14 @@ ROUTES.team = {
 
 // ================================================================ AUDIT LOG
 const AUDIT_TABLES = { po_orders: 'Purchase orders', po_receipts: 'PO deliveries received', po_suppliers: 'Suppliers', stock: 'Stock movements', items: 'Items', units: 'Serials & kit numbers', unit_components: 'Kit component expiry', kit_components: 'Kit components', certifications: 'Certificates',
-  locations: 'Locations', departments: 'Service lines', categories: 'Categories', profiles: 'People & access', memberships: 'Service-line membership', jobs: 'Materials requests', job_lines: 'Materials request lines', job_sections: 'Request approvals by line',
+  locations: 'Locations', departments: 'Service lines', categories: 'Categories', profiles: 'People & access', memberships: 'Team membership', jobs: 'Materials requests', job_lines: 'Materials request lines', job_sections: 'Request approvals by line',
   change_batches: 'Requests & approvals', counts: 'Monthly counts', app_settings: 'Settings', report_signoffs: 'Report sign-offs', sign_events: 'Signatures on documents', documents: 'Signed downloads', signatures: 'Signature uploads', plan_jobs: 'Job planner', item_prices: 'Prices' };
-const AUDIT_NOUN = { po_orders: 'Purchase order', po_receipts: 'PO delivery', po_suppliers: 'Supplier', po_service_lines: 'PO service line', items: 'Item', units: 'Serial / kit number', unit_components: 'Kit component expiry', kit_components: 'Kit component', certifications: 'Certificate', locations: 'Location', departments: 'Service line', categories: 'Category', profiles: 'Person', memberships: 'Service-line membership', jobs: 'Materials request', job_lines: 'Materials request line', job_sections: 'Materials request line approval', change_batches: 'Request', counts: 'Monthly count', app_settings: 'Setting', report_signoffs: 'Report sign-off', sign_events: 'Document', documents: 'Document', signatures: 'Signature', plan_jobs: 'Planned job', item_prices: 'Price' };
-const FIELD_LABEL = { profile_id: 'Person', name: 'Description', code: 'Item code', min_qty: 'Reorder at', max_qty: 'Restock up to', item_type: 'Type', unit: 'Unit', supplier: 'Supplier', notes: 'Notes', active: 'Active', role: 'Access',
-  state: 'Status', department_id: 'Service line', category_id: 'Category', is_kit: 'Redress kit', serial_no: 'Serial / kit no.', lot_no: 'Lot', expiry_on: 'Expiry', due_on: 'Due', cert_no: 'Certificate no.',
-  title: 'Job', status: 'Status', requester_name: 'Requester', requester_id: 'Requester', main_admin: 'Main admin', backup_admin: 'Backup admin', full_name: 'Name', value: 'Value', qty: 'Qty', location_id: 'Location', decision_note: 'Note', kind: 'Kind', superseded: 'Superseded', job_title: 'Job title', signature_id: 'Signature', step: 'Step', document: 'Document', signature: 'Signature', removed_at: 'Removed', return_note: 'Return note', period_label: 'Period', ref: 'Ref', received_by_name: 'Receipt confirmed by', received_at: 'Receipt confirmed' };
-const AUDIT_SKIP = ['requester_id', 'id', 'created_at', 'updated_at', 'import_ref', 'payload', 'created_by', 'decided_by', 'submitted_by', 'decided_at', 'submitted_at', 'verified_at', 'dispatched_at', 'closed_at', 'started_at', 'checkout_id', 'sort', 'apps', 'user_id', 'prepared_by', 'verified_by', 'updated_at', 'prepared_at', 'reviewed_at', 'approved_at', 'returned_at', 'period_from', 'period_to', 'removed_by_name'];
-const auditVal = (k, v) => v === null || v === undefined || v === '' ? '—' : k === 'department_id' ? lineShort(v) : k === 'location_id' || k === 'base_location_id' ? locName(v)
+const AUDIT_NOUN = { po_orders: 'Purchase order', po_receipts: 'PO delivery', po_suppliers: 'Supplier', po_service_lines: 'Service line', inv_subtypes: 'Sub-type', items: 'Item', units: 'Serial / kit number', unit_components: 'Kit component expiry', kit_components: 'Kit component', certifications: 'Certificate', locations: 'Location', departments: 'Team', categories: 'Category', profiles: 'Person', memberships: 'Service-line membership', jobs: 'Materials request', job_lines: 'Materials request line', job_sections: 'Materials request line approval', change_batches: 'Request', counts: 'Monthly count', app_settings: 'Setting', report_signoffs: 'Report sign-off', sign_events: 'Document', documents: 'Document', signatures: 'Signature', plan_jobs: 'Planned job', item_prices: 'Price' };
+const FIELD_LABEL = { sub_line_id: 'Sub service line', subtype_id: 'Sub-type', for_po: 'Used on POs', parent_id: 'Service line', profile_id: 'Person', name: 'Description', code: 'Item code', min_qty: 'Reorder at', max_qty: 'Restock up to', item_type: 'Type', unit: 'Unit', supplier: 'Supplier', notes: 'Notes', active: 'Active', role: 'Access',
+  state: 'Status', department_id: 'Team', category_id: 'Category', is_kit: 'Redress kit', serial_no: 'Serial / kit no.', lot_no: 'Lot', expiry_on: 'Expiry', due_on: 'Due', cert_no: 'Certificate no.',
+  title: 'Job', status: 'Status', requester_name: 'Requester', requester_id: 'Requester', main_admin: 'Main admin', backup_admin: 'Backup admin', full_name: 'Name', value: 'Value', qty: 'Qty', location_id: 'Location', decision_note: 'Note', kind: 'Type', superseded: 'Superseded', job_title: 'Job title', signature_id: 'Signature', step: 'Step', document: 'Document', signature: 'Signature', removed_at: 'Removed', return_note: 'Return note', period_label: 'Period', ref: 'Ref', received_by_name: 'Receipt confirmed by', received_at: 'Receipt confirmed' };
+const AUDIT_SKIP = ['item_type', 'requester_id', 'id', 'created_at', 'updated_at', 'import_ref', 'payload', 'created_by', 'decided_by', 'submitted_by', 'decided_at', 'submitted_at', 'verified_at', 'dispatched_at', 'closed_at', 'started_at', 'checkout_id', 'sort', 'apps', 'user_id', 'prepared_by', 'verified_by', 'updated_at', 'prepared_at', 'reviewed_at', 'approved_at', 'returned_at', 'period_from', 'period_to', 'removed_by_name'];
+const auditVal = (k, v) => v === null || v === undefined || v === '' ? '—' : k === 'department_id' ? lineShort(v) : k === 'sub_line_id' || k === 'parent_id' ? svcLabel(v) : k === 'subtype_id' ? (subtypeName(v) || v) : k === 'kind' && KINDS[v] ? KINDS[v] : k === 'location_id' || k === 'base_location_id' ? locName(v)
   : k === 'category_id' ? (S.cats.find(c => c.id === +v)?.name || v) : ['main_admin', 'backup_admin', 'profile_id'].includes(k) ? personName(v, v) : k === 'role' ? (ROLE_LABEL[v] || v) : k === 'signature_id' ? 'Uploaded' : k === 'status' && SO_STATUS[v] ? SO_STATUS[v][1]
   : typeof v === 'boolean' ? (v ? 'Yes' : 'No') : typeof v === 'object' ? JSON.stringify(v) : String(v);
 const AUD = { who: '', table: '', from: '', to: '', q: '', rows: [], moves: [], done: false };
@@ -435,17 +429,18 @@ ROUTES.settings = {
     if (!isSuper()) return topbar('Nest settings') + '<div class="notice">Only the Super Admin can change settings.</div>';
     await loadLookups();
     return topbar('Nest settings', 'These apply to every app. Each app’s own settings are in that app’s menu: Inventory settings, and PO settings in the Purchase Order app.') +
-      `${typeof companyPanel === 'function' ? companyPanel() : ''}${await alertsPanel()}${maintPanel()}${backupPanel()}`;
+      `${typeof companyPanel === 'function' ? companyPanel() : ''}${await svcPanel()}${await alertsPanel()}${maintPanel()}${backupPanel()}`;
   },
-  bind(main) { if (typeof bindCompanyPanel === 'function') bindCompanyPanel(main); bindBackup(main); bindAlertsPanel(main); bindMaintPanel(main); }
+  bind(main) { if (typeof bindCompanyPanel === 'function') bindCompanyPanel(main); bindSvcPanel(main); bindBackup(main); bindAlertsPanel(main); bindMaintPanel(main);
+    if (location.hash.includes('#svc')) setTimeout(() => $('#svc', main)?.scrollIntoView({ block: 'start' }), 50); }
 };
 // Inventory settings (2.8): count dates, warnings and the QMS form details
 ROUTES.invsettings = {
   async load() {
-    if (!isSuper()) return topbar('Inventory settings') + '<div class="notice">Only the Super Admin can change settings.</div>';
-    await loadLookups();
+    if (!isAdmin()) return topbar('Inventory settings') + '<div class="notice">Only admins and the Super Admin can change Inventory settings.</div>';
+    await loadLookups(); await items();
     const s = k => esc(setting(k, ''));
-    return topbar('Inventory settings', 'These apply to everyone using Inventory.') + `<form id="sf" class="cols">
+    return topbar('Inventory settings', 'These apply to everyone using Inventory.') + subtypePanel() + (!isSuper() ? '' : `<form id="sf" class="cols">
       <section class="panel"><header><h2>Monthly count</h2></header><div class="body">
         <div class="row2"><label class="f">Count opens on day<input type="number" min="1" max="28" name="count_open_day" value="${s('count_open_day')}"></label>
         <label class="f">Deadline (end of day)<input type="number" min="1" max="28" name="count_close_day" value="${s('count_close_day')}"></label></div></div></section>
@@ -455,9 +450,10 @@ ROUTES.invsettings = {
       <section class="panel"><header><h2>QMS form details on reports</h2></header><div class="body">
         <label class="f">Ref No.<input type="text" name="form_ref" value="${s('form_ref')}"></label>
         <div class="row2"><label class="f">Issue date<input type="text" name="form_issue" value="${s('form_issue')}"></label><label class="f">Revision<input type="text" name="form_revision" value="${s('form_revision')}"></label></div></div></section>
-      <div><button class="btn primary" type="submit">Save settings</button></div></form>`;
+      <div><button class="btn primary" type="submit">Save settings</button></div></form>`);
   },
   bind(main) {
+    bindSubtypePanel(main);
     const f = $('#sf', main); if (!f) return;
     f.onsubmit = async e => {
       e.preventDefault(); const d = Object.fromEntries(new FormData(f));
@@ -686,4 +682,94 @@ async function adjustSignature() {
     },
     onSubmit: async () => { await q(sb.rpc('set_signature_fit', { p_scale: k, p_dy: dy })); sigCacheClear(id); toast('Signature size saved'); }
   });
+}
+
+// ================================================================ 2.9 · SERVICE LINES (Nest settings, Super Admin)
+async function svcPanel() {
+  const its = await items().catch(() => []);
+  const cnt = id => its.filter(i => i.sub_line_id === id).length;
+  const majors = svcMajors(true);
+  const sub = l => `<li class="svcsub ${l.active ? '' : 'archived'}" data-id="${l.id}">
+      <div class="grow"><b>${esc(l.name)}</b>${l.active ? '' : ' ' + chip('muted', 'Archived')}<div class="sub">${plural(cnt(l.id), 'item')}</div></div>
+      <label class="svcteam"><span class="sub">Team</span><select data-team="${l.id}">${`<option value="">No team yet (Super Admin)</option>` + S.depts.map(d => opt(d.id, d.short_name || d.name, l.department_id)).join('')}</select></label>
+      <span class="end nowrap"><button class="iconbtn" data-up="${l.id}" title="Move up" aria-label="Move up">↑</button><button class="iconbtn" data-dn="${l.id}" title="Move down" aria-label="Move down">↓</button>
+        <button class="btn small link" data-ren="${l.id}">Rename</button><button class="btn small link" data-arc="${l.id}">${l.active ? 'Archive' : 'Restore'}</button>${cnt(l.id) ? '' : `<button class="btn small link danger" data-del="${l.id}">Delete</button>`}</span></li>`;
+  return `<section class="panel" id="svc"><header><h2>Service lines</h2><span class="meta">One list for Inventory and Purchase Orders</span>
+      <div class="right"><button class="btn small" id="svc-addmajor">${ico('plus')}Service line</button></div></header>
+    <div class="body"><p class="muted">Each sub service line has a <b>team</b>: that team’s admins look after its items and approve changes to them. Changing the team moves the sub line’s items to the new team. The main line’s code goes into PO numbers (GES-<b>WI</b>-PO-…).</p>
+    ${majors.map(m => `<div class="svcmajor ${m.active ? '' : 'archived'}" data-id="${m.id}"><div class="svchead"><span class="linebadge">${esc(m.code || '')}</span> <b>${esc(m.name)}</b>${m.for_po === false ? ' ' + chip('muted', 'Inventory only, not on POs') : ''}${m.active ? '' : ' ' + chip('muted', 'Archived')}
+        <span class="end nowrap"><button class="iconbtn" data-up="${m.id}" title="Move up" aria-label="Move up">↑</button><button class="iconbtn" data-dn="${m.id}" title="Move down" aria-label="Move down">↓</button>
+          <button class="btn small link" data-ren="${m.id}">Edit</button><button class="btn small link" data-arc="${m.id}">${m.active ? 'Archive' : 'Restore'}</button><button class="btn small" data-addsub="${m.id}">${ico('plus')}Sub service line</button></span></div>
+      <ul class="list svcsubs">${svcSubs(m.id, true).map(sub).join('') || '<li class="muted">No sub service lines yet.</li>'}</ul></div>`).join('')}</div></section>`;
+}
+function bindSvcPanel(main) {
+  const p = $('#svc', main); if (!p) return;
+  const save = async (x, msg) => { try { await q(sb.rpc('svc_line_save', { p: x })); toast(msg); await loadLookups(); S.po.at = 0; invalidate(); render({ quiet: true }); } catch (e) { toast(niceError(e), true); } };
+  const edit = (l, parent) => modal({
+    title: l ? `Edit ${l.parent_id ? 'sub service line' : 'service line'}` : parent ? 'Add a sub service line' : 'Add a service line', submit: 'Save',
+    sub: parent ? `Under ${svcById(parent)?.code} · ${svcById(parent)?.name}` : '',
+    body: `${(!l && !parent) || (l && !l.parent_id) ? `<label class="f">Code<span class="hint">2 to 5 letters. It goes into PO numbers, so it can’t change once POs are issued.</span><input type="text" name="code" value="${esc(l?.code)}" maxlength="5" ${l ? '' : 'required'} style="text-transform:uppercase"></label>` : ''}
+      <label class="f">Name<input type="text" name="name" value="${esc(l?.name)}" required></label>
+      ${!parent && !(l && l.parent_id) ? `<label class="check"><input type="checkbox" name="for_po" ${l?.for_po === false ? '' : 'checked'}> Used on purchase orders</label>` : ''}
+      ${parent ? `<label class="f">Team that looks after its items<select name="department_id"><option value="">No team yet (Super Admin)</option>${S.depts.map(d => opt(d.id, d.name)).join('')}</select></label>` : ''}`,
+    onSubmit: async x => {
+      const body = { name: x.name };
+      if (l) body.id = l.id; if (parent) { body.parent_id = parent; if (x.department_id) body.department_id = +x.department_id; }
+      if ('code' in x) body.code = x.code; if (!parent && !(l && l.parent_id)) body.for_po = !!x.for_po;
+      await q(sb.rpc('svc_line_save', { p: body })); toast('Saved'); await loadLookups(); S.po.at = 0; invalidate(); render({ quiet: true });
+    }
+  });
+  $('#svc-addmajor', p).onclick = () => edit(null, null);
+  $$('[data-addsub]', p).forEach(b => b.onclick = () => edit(null, +b.dataset.addsub));
+  $$('[data-ren]', p).forEach(b => b.onclick = () => edit(svcById(b.dataset.ren), null));
+  $$('[data-arc]', p).forEach(b => b.onclick = () => { const l = svcById(b.dataset.arc); save({ id: l.id, active: !l.active }, l.active ? `${l.name} archived: it no longer shows in pick lists` : `${l.name} restored`); });
+  $$('[data-del]', p).forEach(b => b.onclick = async () => { const l = svcById(b.dataset.del); if (!confirm(`Delete ${l.name} for good?`)) return;
+    try { await q(sb.rpc('svc_line_delete', { p_id: l.id })); toast(`${l.name} deleted`); await loadLookups(); render({ quiet: true }); } catch (e) { toast(niceError(e), true); } });
+  $$('[data-team]', p).forEach(sel => sel.onchange = async () => {
+    const l = svcById(sel.dataset.team); const n = (S.items || []).filter(i => i.sub_line_id === l.id).length; const d = sel.value ? lineName(sel.value) : null;
+    if (sel.value && n && !confirm(`${plural(n, 'item')} in ${l.name} will be looked after by ${d}. Their admins get a bell alert. Continue?`)) { sel.value = l.department_id || ''; return; }
+    if (!sel.value && n) { toast('Items need a team: choose the team that should look after them instead.', true); sel.value = l.department_id || ''; return; }
+    save({ id: l.id, department_id: sel.value ? +sel.value : null }, d ? `${l.name}: ${d} now looks after it` : 'Saved');
+  });
+  const order = async (id, dir) => {
+    const l = svcById(id); const sibs = l.parent_id ? svcSubs(l.parent_id, true) : svcMajors(true); const i = sibs.findIndex(x => x.id === l.id); const j = i + dir;
+    if (j < 0 || j >= sibs.length) return; [sibs[i], sibs[j]] = [sibs[j], sibs[i]];
+    try { await q(sb.rpc('svc_line_order', { p_ids: sibs.map(x => x.id) })); await loadLookups(); S.po.at = 0; render({ quiet: true }); } catch (e) { toast(niceError(e), true); }
+  };
+  $$('[data-up]', p).forEach(b => b.onclick = () => order(+b.dataset.up, -1));
+  $$('[data-dn]', p).forEach(b => b.onclick = () => order(+b.dataset.dn, 1));
+}
+
+// ================================================================ 2.9 · TYPES & SUB-TYPES (Inventory settings, Super Admin and admins)
+function subtypePanel() {
+  const its = S.items || []; const cnt = id => its.filter(i => i.subtype_id === id).length;
+  const kcnt = k => its.filter(i => i.kind === k && i.active).length;
+  return `<section class="panel" id="subtypes"><header><h2>Types &amp; sub-types</h2><span class="meta">The Type and Sub-type filters in Inventory</span></header>
+    <div class="body"><p class="muted">The four types are fixed, because each one decides how items behave on jobs. Under each type, add the sub-types people filter by. A sub-type that items use can’t be deleted: archive it, or move its items to another sub-type first.</p>
+    <div class="stgrid">${Object.entries(KINDS).map(([k, v]) => `<div class="stcol"><div class="sthead"><b>${esc(v)}</b><span class="sub">${esc(KIND_HINT[k])} · ${plural(kcnt(k), 'item')}</span></div>
+      <ul class="list compact">${subtypesOf(k, true).map(t => `<li class="${t.active ? '' : 'archived'}"><div class="grow"><b>${esc(t.name)}</b>${t.active ? '' : ' ' + chip('muted', 'Archived')}<div class="sub">${plural(cnt(t.id), 'item')}${t.notes ? ' · ' + esc(t.notes) : ''}</div></div>
+        <span class="end nowrap"><button class="iconbtn" data-stup="${t.id}" title="Move up" aria-label="Move up">↑</button><button class="iconbtn" data-stdn="${t.id}" title="Move down" aria-label="Move down">↓</button>
+        <button class="btn small link" data-sted="${t.id}">Edit</button><button class="btn small link" data-starc="${t.id}">${t.active ? 'Archive' : 'Restore'}</button>${cnt(t.id) ? '' : `<button class="btn small link danger" data-stdel="${t.id}">Delete</button>`}</span></li>`).join('') || '<li class="muted">No sub-types yet.</li>'}</ul>
+      <button class="btn small" data-stadd="${k}">${ico('plus')}Sub-type</button></div>`).join('')}</div></div></section>`;
+}
+function bindSubtypePanel(main) {
+  const p = $('#subtypes', main); if (!p) return;
+  const st = id => (S.subtypes || []).find(t => t.id === +id);
+  const reload = async msg => { if (msg) toast(msg); await loadLookups(); invalidate(); render({ quiet: true }); };
+  const edit = (t, kind) => modal({
+    title: t ? 'Edit sub-type' : `Add a sub-type to ${KINDS[kind]}`, submit: 'Save',
+    body: `<label class="f">Name<input type="text" name="name" value="${esc(t?.name)}" required></label>
+      <label class="f">What goes in it<span class="hint">Optional: examples, so people put items in the right place.</span><input type="text" name="notes" value="${esc(t?.notes)}"></label>`,
+    onSubmit: async x => { await q(sb.rpc('subtype_save', { p: t ? { id: t.id, name: x.name, notes: x.notes } : { kind, name: x.name, notes: x.notes } })); await reload(t ? 'Saved' : 'Sub-type added'); }
+  });
+  $$('[data-stadd]', p).forEach(b => b.onclick = () => edit(null, b.dataset.stadd));
+  $$('[data-sted]', p).forEach(b => b.onclick = () => edit(st(b.dataset.sted)));
+  $$('[data-starc]', p).forEach(b => b.onclick = async () => { const t = st(b.dataset.starc);
+    try { await q(sb.rpc('subtype_save', { p: { id: t.id, active: !t.active } })); await reload(t.active ? `${t.name} archived: items keep it, but it’s no longer offered for new items` : `${t.name} restored`); } catch (e) { toast(niceError(e), true); } });
+  $$('[data-stdel]', p).forEach(b => b.onclick = async () => { const t = st(b.dataset.stdel); if (!confirm(`Delete the sub-type ${t.name}?`)) return;
+    try { await q(sb.rpc('subtype_delete', { p_id: t.id })); await reload(`${t.name} deleted`); } catch (e) { toast(niceError(e), true); } });
+  const order = async (id, dir) => { const t = st(id); const sibs = subtypesOf(t.kind, true); const i = sibs.findIndex(x => x.id === t.id), j = i + dir; if (j < 0 || j >= sibs.length) return;
+    [sibs[i], sibs[j]] = [sibs[j], sibs[i]]; try { await q(sb.rpc('subtype_order', { p_ids: sibs.map(x => x.id) })); await reload(); } catch (e) { toast(niceError(e), true); } };
+  $$('[data-stup]', p).forEach(b => b.onclick = () => order(+b.dataset.stup, -1));
+  $$('[data-stdn]', p).forEach(b => b.onclick = () => order(+b.dataset.stdn, 1));
 }

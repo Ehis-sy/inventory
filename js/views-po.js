@@ -11,8 +11,8 @@ const poOwner = o => isSuper() || (o && o.created_by === S.profile?.id);
 const poStatusChip = o => chip(PO_STATUS[o.status]?.[0] || 'muted', PO_STATUS[o.status]?.[1] || o.status) + (o.revising ? ' ' + chip('pending', `R${o.revision + 1} being prepared`) : '') + (o.is_import ? ' ' + chip('muted', 'Added by hand') : '');
 const poLineName = id => S.po.lines.find(l => l.id === +id)?.name || '—';
 const poLineCode = id => S.po.lines.find(l => l.id === +id)?.code || '';
-const poMajors = () => S.po.lines.filter(l => !l.parent_id).sort((a, b) => a.sort - b.sort);
-const poSubs = major => S.po.lines.filter(l => l.parent_id === +major).sort((a, b) => a.sort - b.sort);
+const poMajors = () => S.po.lines.filter(l => !l.parent_id && l.for_po !== false && l.active !== false).sort((a, b) => a.sort - b.sort);
+const poSubs = major => S.po.lines.filter(l => l.parent_id === +major && l.active !== false).sort((a, b) => a.sort - b.sort);
 const poLineLabel = o => [poLineCode(o.line_id), o.sub_line_id ? poLineName(o.sub_line_id) : poLineName(o.line_id)].filter(Boolean).join(' · ');
 const poSettings = () => setting('po', {}) || {};
 const poOfficeLabel = k => k ? (poSettings().offices?.[k]?.label || k) : 'Left blank';
@@ -1165,12 +1165,13 @@ const poSettingsView = {
     if (!isSuper()) return topbar('PO settings') + '<div class="notice">Only the Super Admin can change the PO settings.</div>';
     await loadLookups();
     const nxt = (setting('po_counter', {}) || {}).next;
-    return topbar('PO settings', 'Numbering and service lines for purchase orders.') +
+    return topbar('PO settings', 'Numbering for purchase orders.') +
       `<div class="notice">The company name and the Abuja and Port Harcourt addresses printed on POs are in <a href="#/settings">Nest admin → Nest settings → Company details</a>.</div>
       <form id="ps-form"><section class="panel"><header><h2>PO numbers</h2></header><div class="body">
         <p>One running number for every service line: <b>GES-{line}-PO-{number}-{year}</b>, for example <b>GES-WI-PO-${esc(nxt || 10038)}-${new Date().getFullYear()}</b>. The number carries on when the year changes.</p>
         <label class="f">Next PO number<span class="hint">Change it only if POs were raised outside Nest. It can’t go below a number Nest has already used.</span><input type="number" name="next_no" value="${esc(nxt || 10038)}" min="1" step="1"></label>
-        <h3 class="grp">Service lines</h3><ul class="list">${poMajors().map(l => `<li><div><b>${esc(l.code)}</b> · ${esc(l.name)}<div class="sub">${poSubs(l.id).map(s => esc(s.name)).join(' · ')}</div></div></li>`).join('')}</ul></div></section>
+        <h3 class="grp">Service lines</h3><ul class="list">${poMajors().map(l => `<li><div><b>${esc(l.code)}</b> · ${esc(l.name)}<div class="sub">${poSubs(l.id).map(s => esc(s.name)).join(' · ')}</div></div></li>`).join('')}</ul>
+        <p class="muted">Service lines are shared with Inventory. Add, rename or archive them in <a href="#/settings#svc">Nest admin → Nest settings → Service lines</a>.</p></div></section>
       <div class="actionrow"><button class="btn primary" type="submit">Save</button></div></form>`;
   },
   bind(main) {

@@ -12,7 +12,7 @@ const S = {
   depts: [], cats: [], locs: [], people: {}, members: [], settings: {},
   items: null, stock: null, pending: 0, alerts: { unread: 0, reminders: [] },
   line: (() => { try { return localStorage.getItem('nest.line') || ''; } catch (e) { return ''; } })(),
-  inv: { q: '', cat: '', type: '', loc: '', view: 'all', moved: '', sel: new Set(), edit: false, changes: new Map() },
+  inv: { q: '', svc: '', sub: '', kind: '', st: '', kit: false, loc: '', view: 'all', moved: '', sel: new Set(), edit: false, changes: new Map() },
   co: { view: 'open', q: '' },
   act: { type: '', from: '', to: '', q: '', rows: [], done: false },
   certs: { view: 'soon', tab: 'certs' },
@@ -43,6 +43,17 @@ const plural = (n, w, p) => `${fq(n)} ${n == 1 ? w : (p || w + 's')}`;
 const STATUS = { available: 'Available', reserved: 'Reserved', in_transit: 'In transit', damaged: 'Damaged' };
 const TYPES = { equipment: 'Equipment (returns)', consumable: 'Consumable', sales: 'Sales item' };
 const TYPE_SHORT = { equipment: 'Equipment', consumable: 'Consumable', sales: 'Sales' };
+// 2.9: the four inventory types (the behaviour above follows from them: rental items and company tools come back from jobs)
+const KINDS = { sales: 'Sales items', rental: 'Rental items', consumable: 'Consumables', asset: 'Company tools & assets' };
+const KIND_HINT = { sales: 'Sold to the client: they leave for good.', rental: 'Go out on jobs and come back.', consumable: 'Used up on jobs.', asset: 'Company tools and assets: go out and come back.' };
+const kindLabel = k => KINDS[k] || '—';
+// service lines (one list for Inventory and PO) and sub-types
+const svcMajors = (all) => (S.svc || []).filter(l => !l.parent_id && (all || l.active !== false)).sort((a, b) => a.sort - b.sort || a.id - b.id);
+const svcSubs = (major, all) => (S.svc || []).filter(l => l.parent_id === +major && (all || l.active !== false)).sort((a, b) => a.sort - b.sort || a.id - b.id);
+const svcById = id => (S.svc || []).find(l => l.id === +id);
+const svcLabel = id => { const s = svcById(id); if (!s) return '—'; const m = svcById(s.parent_id); return m ? `${m.code} · ${s.name}` : s.name; };
+const subtypesOf = (kind, all) => (S.subtypes || []).filter(t => t.kind === kind && (all || t.active)).sort((a, b) => a.sort - b.sort || a.name.localeCompare(b.name));
+const subtypeName = id => (S.subtypes || []).find(t => t.id === +id)?.name || '';
 const CERT_KINDS = { certification: 'Certification', calibration: 'Calibration', maintenance: 'Maintenance', inspection: 'Inspection', pressure_test: 'Pressure test' };
 const ROLE_LABEL = { pending: 'Waiting for approval', staff: 'Staff', admin: 'Admin', superadmin: 'Super Admin', management: 'Management', disabled: 'No access' };
 
@@ -115,13 +126,25 @@ function toast(msg, bad = false) {
   const t = document.createElement('div'); t.className = 'toast' + (bad ? ' bad' : ''); t.textContent = msg;
   $('#toasts').appendChild(t); setTimeout(() => t.remove(), bad ? 6500 : 3200);
 }
+// Loads a tool (PDF, Excel, quote reader…) once. Two things make it reliable on every computer:
+// - some browser add-ons put a "script loader" (define / module / exports) on every page; the tools would register with it
+//   instead of with Nest ("Cannot read properties of undefined (reading 'jsPDF')"), so those are hidden while a tool loads;
+// - a press while the tool is still loading waits for it, and a failed load is tried again on the next press.
+const SCRIPT_LOADS = {};
 function loadScript(src) {
-  return new Promise((res, rej) => {
-    if ($(`script[data-src="${src}"]`)) return res();
-    const s = document.createElement('script'); s.src = src + '?v=' + encodeURIComponent(CFG.VERSION || ''); s.dataset.src = src;
-    s.onload = res; s.onerror = () => rej(new Error('Could not load ' + src + '. Check your connection.'));
-    document.head.appendChild(s);
+  if (SCRIPT_LOADS[src]) return SCRIPT_LOADS[src];
+  const p = new Promise((res, rej) => {
+    const old = $(`script[data-src="${src}"]`); if (old) old.remove();
+    const s = document.createElement('script'); s.src = src + '?v=' + encodeURIComponent(CFG.VERSION || ''); s.dataset.src = src; s.async = false;
+    const keep = {}; const names = ['define', 'module', 'exports'];
+    const hide = () => names.forEach(n => { if (n in window) { keep[n] = window[n]; try { window[n] = undefined; } catch (e) { } } });
+    const restore = () => names.forEach(n => { if (n in keep) { try { window[n] = keep[n]; } catch (e) { } } });
+    s.onload = () => { restore(); res(); };
+    s.onerror = () => { restore(); s.remove(); delete SCRIPT_LOADS[src]; rej(new Error('Could not load ' + src.replace(/^.*\//, '') + '. Check your connection and try again.')); };
+    hide(); document.head.appendChild(s);
   });
+  SCRIPT_LOADS[src] = p;
+  return p;
 }
 function parseHash() {
   const h = location.hash.replace(/^#\/?/, '');
@@ -133,6 +156,7 @@ function setLine(v) { S.line = v ? String(v) : ''; try { localStorage.setItem('n
 
 // ---------------------------------------------------------------- icons
 const I = {
+  lock: '<rect x="5" y="11" width="14" height="9" rx="2"/><path d="M8 11V8a4 4 0 0 1 8 0v3"/>',
   home: '<path d="M3 11l9-7 9 7v9a1 1 0 0 1-1 1h-5v-6H9v6H4a1 1 0 0 1-1-1z"/>',
   box: '<path d="M3 7l9-4 9 4v10l-9 4-9-4z"/><path d="M3 7l9 4 9-4M12 11v10"/>',
   scan: '<path d="M4 8V5a1 1 0 0 1 1-1h3M16 4h3a1 1 0 0 1 1 1v3M20 16v3a1 1 0 0 1-1 1h-3M8 20H5a1 1 0 0 1-1-1v-3"/><path d="M7 12h10"/>',
@@ -199,15 +223,17 @@ const lineOptions = (sel, filter) => S.depts.filter(d => !filter || filter(d)).m
 
 // ---------------------------------------------------------------- data
 async function loadLookups() {
-  const [depts, cats, locs, people, members, settings] = await Promise.all([
+  const [depts, cats, locs, people, members, settings, svc, subtypes] = await Promise.all([
     q(sb.from('departments').select('*').order('sort')),
     q(sb.from('categories').select('*').order('sort')),
     q(sb.from('locations').select('*').order('is_placeholder').order('name')),
     q(sb.from('profiles').select('id,full_name,email,role,created_at,apps,job_title,signature_id')),
     q(sb.from('memberships').select('*')),
     q(sb.from('app_settings').select('*')),
+    q(sb.from('po_service_lines').select('*').order('sort')).catch(() => []),
+    q(sb.from('inv_subtypes').select('*').order('sort')).catch(() => []),
   ]);
-  S.depts = depts; S.cats = cats; S.locs = locs; S.members = members;
+  S.depts = depts; S.cats = cats; S.locs = locs; S.members = members; S.svc = svc; S.subtypes = subtypes;
   S.people = Object.fromEntries(people.map(p => [p.id, p]));
   S.settings = Object.fromEntries(settings.map(s => [s.key, s.value]));
 }
@@ -487,7 +513,7 @@ function navItems() {
     ['certs', 'Certificates & kits', 'cert'], ['reports', 'Reports', 'chart'], ['signoffs', 'Sign-offs', 'sign'], ['activity', 'Activity', 'clock'],
     ['approvals', isAdmin() ? 'Approvals' : 'My requests', 'check']];
   if (isMgmt()) return { main: main.filter(([r]) => ['dashboard', 'inventory', 'planner', 'reports', 'signoffs'].includes(r)), setup: [] };
-  const setup = isAdmin() ? [['locations', 'Locations', 'pin'], ['labels', 'Labels', 'label'], ...(isSuper() ? [['invsettings', 'Inventory settings', 'gear']] : []), ['team', 'Nest admin', 'users']] : [];
+  const setup = isAdmin() ? [['locations', 'Locations', 'pin'], ['labels', 'Labels', 'label'], ['invsettings', 'Inventory settings', 'gear'], ['team', 'Nest admin', 'users']] : [];
   return { main, setup };
 }
 
@@ -527,7 +553,7 @@ function shell() {
 function setNav(r) { $$('[data-r]').forEach(a => a.classList.toggle('on', a.dataset.r === r)); }
 
 const ROUTES = {};
-ROUTES.noapp = { load: async () => topbar('Inventory') + `<div class="notice">You don’t have access to the Inventory app. Ask your admin if you need it.</div><a class="btn" href="#/">Back to Nest home</a>` };
+ROUTES.noapp = { load: async () => topbar('Inventory') + `<div class="notice">You don’t have access to the Inventory app. Ask the Nest admin if you need it.</div><a class="btn" href="#/">Back to Nest home</a>` };
 let renderSeq = 0;
 async function render(opts = {}) {
   if (!S.session || !isActive()) return;
@@ -583,6 +609,10 @@ function appTile(scope, href, icon, name, desc, meta, live) {
   if (m) return href ? `<a class="tile live maint-open" href="${href}">${inner}<span class="t-meta">${m.meta}</span>${m.badge}</a>` : `<div class="tile soon">${inner}<span class="t-meta">${m.meta}</span>${m.badge}</div>`;
   return live && href ? `<a class="tile live" href="${href}">${inner}${meta}</a>` : `<div class="tile soon">${inner}${meta}</div>`;
 }
+// an app the person hasn't been given: shown, but locked
+function lockedTile(icon, name, desc) {
+  return `<div class="tile locked" aria-disabled="true" title="You don’t have access to ${name}"><span class="t-ico">${ico(icon)}</span><span class="t-name">${name}<span class="t-lock" aria-hidden="true">${ico('lock')}</span></span><span class="t-desc">${desc}</span><span class="t-meta">You don’t have access. Ask the Nest admin.</span></div>`;
+}
 async function renderLauncher() {
   const p = S.profile; const first = S.viewAs ? '' : (p.full_name || '').split(' ')[0];
   const apps = p.apps || ['inventory'];
@@ -594,8 +624,8 @@ async function renderLauncher() {
       <div><div class="l-tag">${esc(CFG.TAGLINE || '')}</div><h1>${first ? `Welcome back, ${esc(first)}` : 'Welcome'}</h1>
       <p>Where would you like to go?</p></div></section>
     <section class="tiles">
-      ${appAllowed('inventory') ? appTile('inventory', '#/dashboard', 'box', 'Inventory', 'Equipment, stock, materials requests, monthly counts and reports.', '<span class="t-meta" id="invMeta">Open</span>', true) : ''}
-      ${typeof poCanView === 'function' && poCanView() ? appTile('po', '#/po/overview', 'audit', 'Purchase Order', 'Raise, sign and track purchase orders to OEMs and suppliers.', '<span class="t-meta" id="poMeta">Open</span>', true) : appTile('po', null, 'audit', 'Purchase Order', 'Raise and track purchase orders to OEMs and suppliers.', '<span class="t-meta">Ask the Super Admin for access</span>')}
+      ${appAllowed('inventory') ? appTile('inventory', '#/dashboard', 'box', 'Inventory', 'Equipment, stock, materials requests, monthly counts and reports.', '<span class="t-meta" id="invMeta">Open</span>', true) : lockedTile('box', 'Inventory', 'Equipment, stock, materials requests, monthly counts and reports.')}
+      ${typeof poCanView === 'function' && poCanView() ? appTile('po', '#/po/overview', 'audit', 'Purchase Order', 'Raise, sign and track purchase orders to OEMs and suppliers.', '<span class="t-meta" id="poMeta">Open</span>', true) : lockedTile('audit', 'Purchase Order', 'Raise, sign and track purchase orders to OEMs and suppliers.')}
       ${appTile('proforma', null, 'chart', 'Proforma Invoice &amp; Quote', 'Prepare quotes and proforma invoices for clients.', '<span class="t-meta">Coming later</span>')}
     </section>
     <footer class="l-foot">${esc(CFG.COMPANY || '')} · ${esc(CFG.MOTTO || '')}<br><span>${esc(CFG.APP_NAME)} v${esc(CFG.VERSION || '')} · <span class="credit">${esc(CREDIT)}</span></span></footer></div>`;

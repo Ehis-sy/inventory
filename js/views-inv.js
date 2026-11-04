@@ -19,6 +19,75 @@ function dueChip(due, warn = 30) {
   if (due <= localISO(warn)) return chip('soon', 'Due soon');
   return chip('ok', 'Valid');
 }
+// ---------------------------------------------------------------- 2.9: where an item sits (service line, sub line, type, sub-type)
+const invPlace = i => [i.svc_code && i.sub_line ? `${i.svc_code} · ${i.sub_line}` : (i.sub_line || i.line), i.subtype || kindLabel(i.kind)].filter(Boolean).join(' · ');
+function invSubtypeOptions(kind, sel, opts = {}) {
+  const head = opts.none ? `<option value="">${esc(opts.none)}</option>` : `<option value="">${kind ? 'All sub-types' : 'All sub-types'}</option>`;
+  const all = !!opts.all;
+  if (kind) return head + subtypesOf(kind, all).map(t => opt(t.id, t.name + (t.active ? '' : ' (archived)'), sel)).join('');
+  return head + Object.entries(KINDS).map(([k, v]) => { const ts = subtypesOf(k, all); return ts.length ? `<optgroup label="${esc(v)}">${ts.map(t => opt(t.id, t.name, sel)).join('')}</optgroup>` : ''; }).join('');
+}
+// service line → sub service line → type → sub-type fields, used by Add/Edit item and Move to
+function placeFields(it, { change } = {}) {
+  const sub = it?.sub_line_id ? svcById(it.sub_line_id) : null; const major = sub ? sub.parent_id : '';
+  const nc = change ? '<option value="">No change</option>' : '<option value="">Choose…</option>';
+  return `<div class="row2"><label class="f">Service line<select name="svc" id="pf-svc">${nc}${svcMajors().map(l => opt(l.id, `${l.code} · ${l.name}`, change ? '' : major)).join('')}</select></label>
+      <label class="f">Sub service line<select name="sub_line_id" id="pf-sub"></select></label></div>
+    <div class="row2"><label class="f">Type<select name="kind" id="pf-kind">${nc}${Object.entries(KINDS).map(([k, v]) => opt(k, v, change ? '' : it?.kind)).join('')}</select><span class="hint" id="pf-kindhint"></span></label>
+      <label class="f">Sub-type<select name="subtype_id" id="pf-st"></select></label></div>
+    <div class="notice small" id="pf-team" hidden></div>`;
+}
+function wirePlaceFields(d, it, { change, items: list } = {}) {
+  const sv = $('#pf-svc', d), sb_ = $('#pf-sub', d), kd = $('#pf-kind', d), st = $('#pf-st', d), team = $('#pf-team', d), hint = $('#pf-kindhint', d);
+  const curSub = change ? '' : it?.sub_line_id, curSt = change ? '' : it?.subtype_id;
+  const fillSub = keep => { const subs = sv.value ? svcSubs(sv.value) : [];
+    sb_.innerHTML = (change ? '<option value="">No change</option>' : `<option value="">${sv.value ? 'Choose…' : 'Choose the service line first'}</option>`) + subs.map(l => opt(l.id, l.name + (l.department_id ? '' : ' (no team yet)'), keep ? curSub : '')).join('');
+    sb_.disabled = !sv.value; showTeam(); };
+  const fillSt = keep => {
+    const k = kd.value || (change && list && new Set(list.map(x => x.kind)).size === 1 ? list[0].kind : '');
+    const ts = k ? subtypesOf(k) : [];
+    if (change && !kd.value) st.innerHTML = '<option value="__">No change</option>' + (ts.length ? '<option value="">None</option>' + ts.map(t => opt(t.id, t.name)).join('') : '');
+    else st.innerHTML = '<option value="">None</option>' + ts.map(t => opt(t.id, t.name, keep ? curSt : '')).join('');
+    st.disabled = !ts.length && !(change && !kd.value);
+    hint.textContent = kd.value ? KIND_HINT[kd.value] : '';
+  };
+  const showTeam = () => {
+    const sub = svcById(sb_.value); team.hidden = true; if (!sub) return;
+    const from = [...new Set((list || (it ? [it] : [])).map(x => x.department_id))];
+    if (sub.department_id && from.length && from.some(x => x !== sub.department_id)) { team.hidden = false; team.innerHTML = `${ico('users')}<span>These items will be looked after by <b>${esc(lineName(sub.department_id))}</b>. Its admins get a bell alert.</span>`; }
+    else if (!sub.department_id && !from.length) { team.hidden = false; team.innerHTML = `<span><b>${esc(sub.name)}</b> has no team yet: choose which team looks after this item below.</span>`; }
+    const tw = $('#pf-teamwrap', d); if (tw) tw.hidden = !!sub.department_id;
+  };
+  sv.onchange = () => fillSub(false); sb_.onchange = showTeam; kd.onchange = () => fillSt(false);
+  fillSub(true); fillSt(true);
+}
+// one line for the item's History: what changed in its place (service line, team, type, sub-type)
+function itemDetailChange(a) {
+  const o = a.old_data || {}, n = a.new_data || {}; const parts = [];
+  const v = (k, x) => x == null ? 'none' : k === 'sub_line_id' ? svcLabel(x) : k === 'subtype_id' ? (subtypeName(x) || '#' + x) : k === 'department_id' ? lineName(x) : k === 'kind' ? kindLabel(x) : String(x);
+  [['sub_line_id', 'Sub service line'], ['kind', 'Type'], ['subtype_id', 'Sub-type'], ['department_id', 'Team']].forEach(([k, l]) => { if (k in n) parts.push(`${l}: ${v(k, o[k])} → ${v(k, n[k])}`); });
+  return parts.join(' · ');
+}
+// Move to… (admins): sub service line, type and sub-type for the selected items
+function moveItemsTo(list) {
+  const out = list.filter(i => +i.qty_out > 0);
+  return modal({
+    title: `Move ${plural(list.length, 'item')}`, submit: 'Move', wide: false,
+    sub: 'Choose where these items belong. Anything left as “No change” stays as it is. Moving into another team’s sub service line hands the items to that team.',
+    body: placeFields(null, { change: true }) + (out.length ? `<p class="muted small">${plural(out.length, 'item')} ${out.length === 1 ? 'is' : 'are'} out on a job, so ${out.length === 1 ? 'its' : 'their'} type can’t change until ${out.length === 1 ? 'it’s' : 'they’re'} back.</p>` : ''),
+    onOpen: d => wirePlaceFields(d, null, { change: true, items: list }),
+    onSubmit: async x => {
+      const p = {};
+      if (x.sub_line_id) p.sub_line_id = +x.sub_line_id; else if (x.svc) throw new Error('Choose the sub service line too, or set Service line back to “No change”.');
+      if (x.kind) p.kind = x.kind;
+      if (x.subtype_id !== '__' && x.subtype_id !== undefined) p.subtype_id = x.subtype_id ? +x.subtype_id : null;
+      if (!Object.keys(p).length) throw new Error('Choose at least one thing to change.');
+      const n = await q(sb.rpc('item_move', { p_ids: list.map(i => i.id), p }));
+      toast(`Moved ${plural(n, 'item')}`); S.inv.sel.clear(); invalidate(); refresh();
+    }
+  });
+}
+
 function needsReorder(it) { return it.active && (it.is_low || (it.item_type !== 'equipment' && +it.qty_available === 0)); }
 function unplacedQty(it) { const ph = placeholderLoc(); return ph ? stockOf(it.id, ph.id) + stockOf(it.id, ph.id, 'damaged') + stockOf(it.id, ph.id, 'reserved') : 0; }
 
@@ -102,7 +171,7 @@ ROUTES.dashboard = {
             c.due_back ? (c.due_back < t ? chip('overdue', 'Due ' + fd(c.due_back)) : `<span class="sub">Due ${fd(c.due_back)}</span>`) : '<span class="sub">No due date</span>')).join('')}</ul>`
             : '<div class="empty">Nothing is checked out right now.</div>'}</section>
         <section class="panel"><header><h2>Need restocking</h2><span class="meta">at or below reorder level</span><div class="right"><a class="btn small" href="#/inventory?v=reorder">See all</a></div></header>
-          ${low.length ? `<ul class="list">${low.slice(0, 7).map(i => li(`#/item/${i.id}`, `${tag(i.code)} ${esc(i.name)}`, `${esc(i.line)} · ${TYPE_SHORT[i.item_type]}`,
+          ${low.length ? `<ul class="list">${low.slice(0, 7).map(i => li(`#/item/${i.id}`, `${tag(i.code)} ${esc(i.name)}`, `${esc(i.sub_line || i.line)} · ${esc(kindLabel(i.kind))}`,
             `${S.orders[i.id] ? (S.orders[i.id].expected_on && S.orders[i.id].expected_on < t ? chip('overdue', 'On order · late') : chip('onorder', 'On order' + (S.orders[i.id].expected_on ? ' · ' + fdm(S.orders[i.id].expected_on) : ''))) + ' ' : ''}<b>${fq(i.qty_available)}</b> <span class="sub">left${i.min_qty != null ? ` / min ${fq(i.min_qty)}` : ''}</span>`)).join('')}</ul>`
             : '<div class="empty">Nothing is below its reorder level. Set a minimum on an item to get alerts.</div>'}</section>
         <section class="panel"><header><h2>Expiring soon</h2><span class="meta">certificates and redress kits</span><div class="right"><a class="btn small" href="#/certs">See all</a></div></header>
@@ -132,23 +201,28 @@ ROUTES.inventory = {
     const locCols = [...realLocs(), ...(placeholderLoc() ? [placeholderLoc()] : [])];
     this.locCols = locCols;
     const canEditAny = S.depts.some(d => canAct(d.id));
-    return topbar('Inventory', `${its.filter(i => i.active && (!S.line || i.department_id === +S.line)).length} active items${S.line ? ' in ' + esc(lineName(S.line)) : ''}`,
+    return topbar('Inventory', `${its.filter(i => i.active).length} active items`,
       `<button class="btn" id="tpl">${ico('up')}Excel templates</button>
        <button class="btn" id="xls">${ico('down')}Excel</button><button class="btn" id="pdf">${ico('pdf')}PDF</button>
        ${canEditAny ? `<button class="btn ${f.edit ? 'tagbtn' : ''}" id="editmode">${ico('edit')}${f.edit ? 'Editing quantities' : 'Edit quantities'}</button>` : ''}
        ${isAdmin() ? `<button class="btn primary" id="add">${ico('plus')}Add item</button>` : ''}`) +
-      lineChips() +
-      `<div class="filters">
+      `<div class="filters invfilters">
         <input type="search" id="q" placeholder="Search code, description, serial or kit no., or scan a label" value="${esc(f.q)}" autocomplete="off">
-        <select id="cat" aria-label="Category"><option value="">All categories</option>${S.cats.filter(c => !S.line || c.department_id === +S.line).map(c => opt(c.id, (S.line ? '' : lineShort(c.department_id) + ' · ') + c.name, f.cat)).join('')}</select>
-        <select id="type" aria-label="Type"><option value="">All types</option>${Object.entries(TYPE_SHORT).map(([k, v]) => opt(k, v, f.type)).join('')}<option value="kit" ${f.type === 'kit' ? 'selected' : ''}>Redress kits</option></select>
+        <select id="f-svc" aria-label="Service line"><option value="">All service lines</option>${svcMajors().map(l => opt(l.id, `${l.code} · ${l.name}`, f.svc)).join('')}</select>
+        <select id="f-sub" aria-label="Sub service line" ${f.svc ? '' : 'disabled'}><option value="">All sub service lines</option>${f.svc ? svcSubs(f.svc).map(l => opt(l.id, l.name, f.sub)).join('') : ''}</select>
+        <select id="f-kind" aria-label="Type"><option value="">All types</option>${Object.entries(KINDS).map(([k, v]) => opt(k, v, f.kind)).join('')}</select>
+        <select id="f-st" aria-label="Sub-type">${invSubtypeOptions(f.kind, f.st)}</select>
+      </div>
+      <div class="filters">
         <select id="loc" aria-label="Location"><option value="">All locations</option>${S.locs.map(l => opt(l.id, l.name, f.loc)).join('')}</select>
         <select id="moved" aria-label="Last moved"><option value="">Any date</option>${[['7', 'Moved in last 7 days'], ['30', 'Moved in last 30 days'], ['90', 'Moved in last 90 days'], ['never', 'Not moved since import']].map(([k, v]) => opt(k, v, f.moved)).join('')}</select>
+        <label class="check inline"><input type="checkbox" id="f-kit" ${f.kit ? 'checked' : ''}> Redress kits only</label>
+        <button type="button" class="linkbtn" id="f-clear" hidden>Clear filters</button>
       </div>
       <div class="filters"><div class="seg" id="seg">${[['all', 'All'], ['available', 'In store'], ['out', 'Out on jobs'], ['reorder', 'Need restocking'], ['damaged', 'Damaged'], ['noloc', 'Location not set'], ['zero', 'Zero balance'], ['archived', 'Archived']]
         .map(([k, l]) => `<button type="button" data-v="${k}" class="${f.view === k ? 'on' : ''}">${l}</button>`).join('')}</div>
         <span class="muted" id="shown"></span></div>
-      ${f.edit ? `<div class="notice ok editnote">${ico('edit')} <span><b>Edit mode:</b> type the correct in-store numbers in the location columns. ${isAdmin() ? 'Your changes apply when you press Apply.' : 'When you’re done, press Review &amp; submit: your admin gets them all as one request.'} Only your service line(s) can be edited.</span></div>` : ''}
+      ${f.edit ? `<div class="notice ok editnote">${ico('edit')} <span><b>Edit mode:</b> type the correct in-store numbers in the location columns. ${isAdmin() ? 'Your changes apply when you press Apply.' : 'When you’re done, press Review &amp; submit: your admin gets them all as one request.'} Only items your team looks after can be edited.</span></div>` : ''}
       <div id="bulk"></div>
       <section class="panel"><div class="tablewrap"><table class="t stack inv ${f.edit ? 'editing' : ''}" id="tbl"><thead><tr>
         <th class="cb"><input type="checkbox" id="all" aria-label="Select all shown"></th><th>Code</th><th>Description</th>
@@ -162,9 +236,11 @@ ROUTES.inventory = {
     const since = f.moved && f.moved !== 'never' ? localISO(-+f.moved) : null;
     return this.rows.filter(i => {
       if (f.view === 'archived' ? i.active : !i.active) return false;
-      if (S.line && i.department_id !== +S.line) return false;
-      if (f.cat && i.category_id != f.cat) return false;
-      if (f.type === 'kit' ? !i.is_kit : (f.type && i.item_type !== f.type)) return false;
+      if (f.svc && i.svc_line_id !== +f.svc) return false;
+      if (f.sub && i.sub_line_id !== +f.sub) return false;
+      if (f.kind && i.kind !== f.kind) return false;
+      if (f.st && i.subtype_id !== +f.st) return false;
+      if (f.kit && !i.is_kit) return false;
       if (locN && !(i.locations || '').split(', ').includes(locN)) return false;
       if (f.moved === 'never' && i.last_moved_at) return false;
       if (since && !(i.last_moved_at && i.last_moved_at.slice(0, 10) >= since)) return false;
@@ -174,13 +250,14 @@ ROUTES.inventory = {
       if (f.view === 'damaged' && !(+i.qty_damaged > 0)) return false;
       if (f.view === 'noloc' && !(unplacedQty(i) > 0)) return false;
       if (f.view === 'zero' && +i.qty_total !== 0) return false;
-      if (qq && !(`${i.code || ''} ${i.name} ${i.category || ''} ${i.supplier || ''} ${i.serials || ''}`.toLowerCase().includes(qq))) return false;
+      if (qq && !(`${i.code || ''} ${i.name} ${i.category || ''} ${i.sub_line || ''} ${i.supplier || ''} ${i.serials || ''}`.toLowerCase().includes(qq))) return false;
       return true;
     });
   },
   draw(main) {
     const rows = this.filtered(); const sel = S.inv.sel; const f = S.inv;
     $('#shown', main).textContent = `${rows.length} shown`;
+    const fc = $('#f-clear', main); if (fc) fc.hidden = !(f.svc || f.sub || f.kind || f.st || f.kit || f.loc || f.moved);
     const shownRows = rows.slice(0, 800);
     $('#tbl tbody', main).innerHTML = shownRows.length ? shownRows.map(i => {
       const editable = f.edit && canAct(i.department_id);
@@ -193,7 +270,7 @@ ROUTES.inventory = {
       return `<tr class="${f.edit ? '' : 'click'} ${f.edit && !editable ? 'locked' : ''}" data-id="${i.id}">
       <td class="cb"><input type="checkbox" data-sel="${i.id}" ${sel.has(i.id) ? 'checked' : ''} aria-label="Select ${esc(i.name)}"></td>
       <td class="codecell">${tag(i.code)}</td>
-      <td class="full desc"><div class="name">${f.edit ? `<a href="#/item/${i.id}">${esc(i.name)}</a>` : esc(i.name)}</div><div class="sub">${esc(i.line)} · ${esc(i.category)}${i.is_kit ? ' · Kit' : ''}</div></td>
+      <td class="full desc"><div class="name">${f.edit ? `<a href="#/item/${i.id}">${esc(i.name)}</a>` : esc(i.name)}</div><div class="sub">${esc(invPlace(i))}${i.is_kit ? ' · Kit' : ''}</div></td>
       ${cells}
       <td class="num outcell ${+i.qty_out ? '' : 'zero'}">${+i.qty_out ? `<b>${fq(i.qty_out)}</b>` : '·'}<span class="qlbl">Out</span></td>
       <td class="full chips">${statusChips(i)}</td>
@@ -210,8 +287,9 @@ ROUTES.inventory = {
     const canEdit = selItems.length && selItems.every(i => canAdmin(i.department_id));
     b.innerHTML = n ? `<div class="bulkbar"><b>${n} selected</b>
       <button class="btn small tagbtn" id="b-mr">${ico('truck')}Add to materials request</button>
-      ${canMove ? `<button class="btn small" id="b-move">${ico('move')}Move location</button>` : ''}
+      ${canMove ? `<button class="btn small" id="b-move">${ico('pin')}Move location</button>` : ''}
       ${isAdmin() ? `<button class="btn small" id="b-labels">${ico('print')}Print labels</button>` : ''}
+      ${canEdit ? `<button class="btn small" id="b-place">${ico('move')}Move to…</button>` : ''}
       ${canEdit ? '<button class="btn small" id="b-edit">Edit details</button>' : ''}
       ${canEdit ? (S.inv.view === 'archived' ? '<button class="btn small" id="b-restore">Restore</button>' : '<button class="btn small" id="b-archive">Archive</button>') : ''}
       ${canEdit ? `<button class="btn small link danger" id="b-del">${ico('trash')}Delete</button>` : ''}
@@ -220,6 +298,7 @@ ROUTES.inventory = {
     $('#b-clear', b).onclick = () => { S.inv.sel.clear(); this.draw(main); };
     const l = $('#b-labels', b); if (l) l.onclick = () => { sessionStorage.setItem('labels', JSON.stringify([...S.inv.sel])); go('#/labels'); };
     const e = $('#b-edit', b); if (e) e.onclick = () => bulkEdit([...S.inv.sel]);
+    const pl = $('#b-place', b); if (pl) pl.onclick = () => moveItemsTo(selItems);
     const m = $('#b-move', b); if (m) m.onclick = () => bulkMove(selItems);
     $('#b-mr', b).onclick = () => addSelectedToRequest(selItems);
     const ar = $('#b-archive', b); if (ar) ar.onclick = () => bulkArchive(selItems, false);
@@ -238,12 +317,15 @@ ROUTES.inventory = {
   },
   bind(main) {
     const f = S.inv; const redraw = () => this.draw(main);
-    bindLineChips(main, () => { f.cat = ''; render({ quiet: true }); });
     const qi = $('#q', main);
     qi.oninput = debounce(() => { f.q = qi.value; redraw(); }, 140);
     qi.onkeydown = e => { if (e.key === 'Enter') { e.preventDefault(); const m = matchCode(qi.value); if (m.length === 1 && !f.edit) go('#/item/' + m[0].id); } };
-    $('#cat', main).onchange = e => { f.cat = e.target.value; redraw(); };
-    $('#type', main).onchange = e => { f.type = e.target.value; redraw(); };
+    $('#f-svc', main).onchange = e => { f.svc = e.target.value; f.sub = ''; render({ quiet: true }); };
+    $('#f-sub', main).onchange = e => { f.sub = e.target.value; redraw(); };
+    $('#f-kind', main).onchange = e => { f.kind = e.target.value; if (f.st && !subtypesOf(f.kind, true).some(t => t.id === +f.st)) f.st = ''; $('#f-st', main).innerHTML = invSubtypeOptions(f.kind, f.st); redraw(); };
+    $('#f-st', main).onchange = e => { f.st = e.target.value; const t = (S.subtypes || []).find(x => x.id === +f.st); if (t && !f.kind) { f.kind = t.kind; $('#f-kind', main).value = t.kind; $('#f-st', main).innerHTML = invSubtypeOptions(f.kind, f.st); } redraw(); };
+    $('#f-kit', main).onchange = e => { f.kit = e.target.checked; redraw(); };
+    const fc = $('#f-clear', main); if (fc) fc.onclick = () => { Object.assign(f, { svc: '', sub: '', kind: '', st: '', kit: false, loc: '', moved: '' }); render({ quiet: true }); };
     $('#loc', main).onchange = e => { f.loc = e.target.value; redraw(); };
     $('#moved', main).onchange = e => { f.moved = e.target.value; redraw(); };
     $$('#seg button', main).forEach(b => b.onclick = () => { f.view = b.dataset.v; $$('#seg button', main).forEach(x => x.classList.toggle('on', x === b)); redraw(); });
@@ -277,12 +359,13 @@ function templatesMenu() {
     title: 'Excel templates', sub: 'Download a template for your service line, fill it in, then upload it. You’ll see a preview before anything changes.', submit: null, cancel: 'Close',
     body: `<div class="tplgrid">
       ${Object.entries(TEMPLATE_INFO).map(([k, v]) => `<div class="tplcard"><b>${esc(v.title)}</b><span class="sub">${{
+        items: 'Change item details (service line, type, sub-type, codes, reorder levels) and add new items. Uses the Inventory filters you have set.',
         locations: 'Set how many of each item are in each store location. Applies as moves.',
         quantities: 'Correct in-store numbers. Staff corrections go to the admin as one request.',
         kits: 'Kit numbers, components and expiry dates for redress kits.' }[k]}</span>
         <button type="button" class="btn small" data-dl="${k}">${ico('down')}Download</button></div>`).join('')}</div>
       <button type="button" class="btn tagbtn mt" id="ul">${ico('up')}Upload a filled template</button>
-      <p class="muted mt">Templates cover ${S.line ? esc(lineName(S.line)) : isAdmin() ? 'all service lines' : 'your service line(s)'}. Pick a service line on the Inventory page first to narrow it.</p>`,
+      <p class="muted mt">Templates cover ${isAdmin() ? 'every team' : 'your team'}. The items template only has the items shown on the Inventory page, so set the filters first to narrow it.</p>`,
     onOpen: (d, close) => {
       $$('[data-dl]', d).forEach(b => b.onclick = async () => { b.disabled = true; b.textContent = 'Preparing…'; try { await downloadTemplate(b.dataset.dl); } catch (e) { toast(niceError(e), true); } b.disabled = false; b.innerHTML = `${ico('down')}Download`; });
       $('#ul', d).onclick = () => { close(null); uploadTemplate(); };
@@ -336,41 +419,49 @@ function matchCode(text) {
 }
 
 async function exportInventory(kind, rows) {
+  rows = rows || [];
   if (!rows.length) return toast('Nothing to export: no items match the current filters. Clear the search or filters and try again.', true);
   try {
     toast('Preparing your file…');
     await stockRows();
     const real = realLocs(); const ph = placeholderLoc();
-    const lines = S.depts.filter(d => rows.some(r => r.department_id === d.id));
+    // 2.9: grouped by sub service line, then type and sub-type
+    const kOrd = Object.keys(KINDS); const stOrd = id => { const t = (S.subtypes || []).find(x => x.id === id); return t ? t.sort : 999; };
+    const groups = []; svcMajors(true).forEach(m => svcSubs(m.id, true).forEach(sl => { if (rows.some(r => r.sub_line_id === sl.id)) groups.push({ id: sl.id, name: `${m.code} · ${sl.name}`, short: `${m.code} ${sl.name}` }); }));
+    if (rows.some(r => !r.sub_line_id)) groups.push({ id: null, name: 'No service line', short: 'No service line' });
+    const inG = (r, g) => (r.sub_line_id || null) === g.id;
+    rows = rows.slice().sort((a, b) => kOrd.indexOf(a.kind) - kOrd.indexOf(b.kind) || stOrd(a.subtype_id) - stOrd(b.subtype_id) || String(a.subtype || '').localeCompare(String(b.subtype || '')));
     const title = 'Equipment Inventory';
-    const subtitle = `${S.line ? lineName(S.line) : 'All service lines'} · as at ${fd(localISO(0))}`;
+    const f = S.inv; const scope = [f.svc && svcById(f.svc) ? `${svcById(f.svc).code} · ${svcById(f.svc).name}` : '', f.sub ? svcById(f.sub)?.name : '', f.kind ? kindLabel(f.kind) : '', f.st ? subtypeName(f.st) : ''].filter(Boolean).join(' · ');
+    const subtitle = `${scope || 'All service lines'} · as at ${fd(localISO(0))}`;
     const tone = (r, k) => (k === 'status' && r._low) ? 'low' : (k === 'damaged' && +r.damaged) ? 'damaged' : (k === 'out' && +r.out) ? 'out' : null;
-    const mk = i => ({ code: i.code || '', name: i.name, category: i.category, type: TYPE_SHORT[i.item_type], ...Object.fromEntries(real.map(l => ['L' + l.id, stockOf(i.id, l.id) || ''])),
+    const mk = i => ({ code: i.code || '', name: i.name, category: i.subtype || '', type: kindLabel(i.kind), team: i.line || '', ...Object.fromEntries(real.map(l => ['L' + l.id, stockOf(i.id, l.id) || ''])),
       unset: ph ? (stockOf(i.id, ph.id) || '') : '', out: +i.qty_out || '', damaged: +i.qty_damaged || '', total: +i.qty_total, min: i.min_qty ?? '',
       next: i.next_due || i.kit_expiry || '', status: needsReorder(i) ? 'Restock' : '', _low: needsReorder(i), line: i.department });
     const kpis = [{ label: 'Items', value: fq(rows.length) }, { label: 'Out on jobs', value: fq(rows.filter(r => +r.qty_out).length) },
       { label: 'Need restocking', value: fq(rows.filter(needsReorder).length), tone: 'warn' }, { label: 'Damaged', value: fq(rows.filter(r => +r.qty_damaged).length), tone: 'bad' }];
     if (kind === 'xlsx') {
-      const columns = [{ header: 'Item Code', key: 'code', width: 26, bold: true }, { header: 'Description', key: 'name', width: 54, wrap: true }, { header: 'Category', key: 'category', width: 26 },
-        { header: 'Type', key: 'type', width: 12 }, ...real.map(l => ({ header: l.name, key: 'L' + l.id, width: 12, type: 'num' })), { header: 'Location not set', key: 'unset', width: 11, type: 'num' },
+      const columns = [{ header: 'Item Code', key: 'code', width: 26, bold: true }, { header: 'Description', key: 'name', width: 54, wrap: true }, { header: 'Type', key: 'type', width: 20 },
+        { header: 'Sub-type', key: 'category', width: 26 }, { header: 'Team', key: 'team', width: 14 }, ...real.map(l => ({ header: l.name, key: 'L' + l.id, width: 12, type: 'num' })), { header: 'Location not set', key: 'unset', width: 11, type: 'num' },
         { header: 'Out on jobs', key: 'out', width: 10, type: 'num' }, { header: 'Damaged', key: 'damaged', width: 10, type: 'num' }, { header: 'Total', key: 'total', width: 9, type: 'num', bold: true },
         { header: 'Reorder at', key: 'min', width: 10, type: 'num' }, { header: 'Next cert / kit expiry', key: 'next', width: 14, type: 'date' }, { header: 'Status', key: 'status', width: 11 }];
-      const sheets = lines.map(d => ({ name: d.short_name || d.name, title: `${title}: ${d.name}`, subtitle: `As at ${fd(localISO(0))}`, columns, group: null,
-        rows: rows.filter(r => r.department_id === d.id).map(mk), cellStyle: tone, totals: ['total', 'out', 'damaged', ...real.map(l => 'L' + l.id), 'unset'],
-        kpis: [{ label: 'Items', value: rows.filter(r => r.department_id === d.id).length }, { label: 'Need restocking', value: rows.filter(r => r.department_id === d.id && needsReorder(r)).length, tone: 'warn' }] }));
-      const reorder = rows.filter(needsReorder).map(i => ({ code: i.code, name: i.name, line: i.line, avail: +i.qty_available, min: i.min_qty ?? '', order: i.max_qty != null ? Math.max(0, i.max_qty - i.qty_available) : '', supplier: i.supplier || '' }));
+      const used = new Set(); const sheetName = g => { let n = g.short.replace(/[\\/?*\[\]:]/g, '').slice(0, 31); let k = 2; while (used.has(n)) n = n.slice(0, 28) + ' ' + k++; used.add(n); return n; };
+      const sheets = groups.map(g => ({ name: sheetName(g), title: `${title}: ${g.name}`, subtitle: `As at ${fd(localISO(0))}`, columns, group: null,
+        rows: rows.filter(r => inG(r, g)).map(mk), cellStyle: tone, totals: ['total', 'out', 'damaged', ...real.map(l => 'L' + l.id), 'unset'],
+        kpis: [{ label: 'Items', value: rows.filter(r => inG(r, g)).length }, { label: 'Need restocking', value: rows.filter(r => inG(r, g) && needsReorder(r)).length, tone: 'warn' }] }));
+      const reorder = rows.filter(needsReorder).map(i => ({ code: i.code, name: i.name, line: i.sub_line || i.line, avail: +i.qty_available, min: i.min_qty ?? '', order: i.max_qty != null ? Math.max(0, i.max_qty - i.qty_available) : '', supplier: i.supplier || '' }));
       sheets.push({ name: 'Restock list', title: 'Restock list', subtitle, rows: reorder, columns: [{ header: 'Item Code', key: 'code', width: 26 }, { header: 'Description', key: 'name', width: 54, wrap: true },
-        { header: 'Service line', key: 'line', width: 14 }, { header: 'In store', key: 'avail', width: 10, type: 'num' }, { header: 'Reorder at', key: 'min', width: 10, type: 'num' },
+        { header: 'Sub service line', key: 'line', width: 26 }, { header: 'In store', key: 'avail', width: 10, type: 'num' }, { header: 'Reorder at', key: 'min', width: 10, type: 'num' },
         { header: 'Suggested order', key: 'order', width: 12, type: 'num' }, { header: 'OEM / supplier', key: 'supplier', width: 22 }] });
       await brandXlsx({ file: `GANKCO_Inventory_${localISO(0)}.xlsx`, sheets });
     } else {
       const columns = [{ header: 'Item Code', dataKey: 'code', width: 40, bold: true }, { header: 'Description', dataKey: 'name' }, ...real.map(l => ({ header: l.name, dataKey: 'L' + l.id, width: 17, align: 'right' })),
         { header: 'Not set', dataKey: 'unset', width: 14, align: 'right' }, { header: 'Out', dataKey: 'out', width: 11, align: 'right' }, { header: 'Damaged', dataKey: 'damaged', width: 15, align: 'right' },
         { header: 'Total', dataKey: 'total', width: 12, align: 'right' }, { header: 'Status', dataKey: 'status', width: 16 }];
-      const sections = lines.map(d => {
-        const rs = []; let lastCat = null;
-        rows.filter(r => r.department_id === d.id).forEach(i => { if (i.category !== lastCat) { lastCat = i.category; rs.push({ code: i.category, _group: true }); } rs.push(mk(i)); });
-        return { heading: d.name, headingNote: `${plural(rows.filter(r => r.department_id === d.id).length, 'item')}`, columns, rows: rs, cellStyle: tone };
+      const sections = groups.map(g => {
+        const rs = []; let last = null;
+        rows.filter(r => inG(r, g)).forEach(i => { const h = `${kindLabel(i.kind)}${i.subtype ? ' · ' + i.subtype : ''}`; if (h !== last) { last = h; rs.push({ code: h, _group: true }); } rs.push(mk(i)); });
+        return { heading: g.name, headingNote: `${plural(rows.filter(r => inG(r, g)).length, 'item')}`, columns, rows: rs, cellStyle: tone };
       });
       await brandPdf({ file: `GANKCO_Inventory_${localISO(0)}.pdf`, title, subtitle, kpis, sections, meta: [['Prepared by', S.profile.full_name || S.profile.email]], signatures: [mySignature('Prepared by', `${title} · ${subtitle}`)] });
     }
@@ -378,65 +469,52 @@ async function exportInventory(kind, rows) {
 }
 
 // ---------------------------------------------------------------- item editor (admin)
-function deptCatFields(it) {
-  const dept = it?.department_id || +S.line || S.depts.find(d => canAdmin(d.id))?.id;
-  return `<div class="row2"><label class="f">Service line<select name="department_id" id="f-dept">${lineOptions(dept, d => canAdmin(d.id))}</select></label>
-    <label class="f">Category<select name="category_id" id="f-cat"></select></label></div>
-    <label class="f" id="f-newcat-wrap" hidden>New category name<input type="text" name="new_category"></label>`;
-}
-function wireDeptCat(d, it) {
-  const ds = $('#f-dept', d), cs = $('#f-cat', d), wrap = $('#f-newcat-wrap', d);
-  const fill = () => { cs.innerHTML = S.cats.filter(c => c.department_id == ds.value).map(c => opt(c.id, c.name, it?.category_id)).join('') + opt('new', '+ New category…'); wrap.hidden = cs.value !== 'new'; };
-  ds.onchange = fill; cs.onchange = () => { wrap.hidden = cs.value !== 'new'; }; fill();
-}
-async function resolveCategory(data) {
-  if (data.category_id !== 'new') return +data.category_id;
-  const name = (data.new_category || '').trim(); if (!name) throw new Error('Type a name for the new category.');
-  const c = await q(sb.from('categories').insert({ department_id: +data.department_id, name, sort: 999 }).select().single());
-  S.cats.push(c); return c.id;
-}
 const SVC_OPTS = (cur, bulk) => [[bulk ? 'none' : '', 'No idle-service rule'], ['6', '6 months'], ['12', '12 months (1 year)'], ['18', '18 months'], ['24', '24 months (2 years)']]
   .map(([v, l]) => opt(v, l, cur == null ? (bulk ? undefined : '') : String(cur))).join('');
 function editItem(it) {
   const isNew = !it;
+  const myTeam = it?.department_id || S.depts.find(d => canAdmin(d.id))?.id;
   return modal({
     title: isNew ? 'Add item' : 'Edit item', submit: isNew ? 'Add item' : 'Save changes',
     body: `<div class="row2"><label class="f">Item code<input type="text" name="code" value="${esc(it?.code)}" placeholder="e.g. GES-SLT-STB-005"></label>
-      <label class="f">Type<select name="item_type">${Object.entries(TYPES).map(([k, v]) => opt(k, v, it?.item_type || 'equipment')).join('')}</select></label></div>
+      <label class="f">Unit<input type="text" name="unit" value="${esc(it?.unit || 'pcs')}"></label></div>
       <label class="f">Description<input type="text" name="name" value="${esc(it?.name)}" required></label>
-      ${deptCatFields(it)}
+      ${placeFields(it)}
+      ${isNew ? `<label class="f" id="pf-teamwrap" hidden>Team that looks after it<span class="hint">The sub service line has no team yet. Set one in Nest settings → Service lines.</span><select name="department_id">${lineOptions(myTeam, d => canAdmin(d.id))}</select></label>` : ''}
       <div class="row2"><label class="f">Reorder at (min)<span class="hint">Alert when the in-store quantity falls to this.</span><input type="number" step="any" min="0" name="min_qty" value="${esc(it?.min_qty)}"></label>
       <label class="f">Restock up to (max)<span class="hint">Used to suggest how many to order.</span><input type="number" step="any" min="0" name="max_qty" value="${esc(it?.max_qty)}"></label></div>
-      <div class="row2"><label class="f">Unit<input type="text" name="unit" value="${esc(it?.unit || 'pcs')}"></label>
-      <label class="f">OEM / supplier<input type="text" name="supplier" value="${esc(it?.supplier)}"></label></div>
+      <label class="f">OEM / supplier<input type="text" name="supplier" value="${esc(it?.supplier)}"></label>
       <label class="f">Service if idle on the shelf<span class="hint">Nest reminds the line admin when the tool hasn’t been used or serviced for this long.</span><select name="svc">${SVC_OPTS(it?.service_idle_months)}</select></label>
       ${isNew ? `<div class="row2"><label class="f">Opening quantity<input type="number" step="any" min="0" name="qty" value="0"></label>
         <label class="f">At location<select name="location_id">${locOptions(realLocs()[0]?.id)}</select></label></div>` : ''}
       <label class="f">Notes<textarea name="notes">${esc(it?.notes)}</textarea></label>
       <label class="check"><input type="checkbox" name="is_kit" ${it?.is_kit ? 'checked' : ''}> This is a redress kit (track kit numbers, components and expiry dates)</label>
       ${isNew ? '' : `<label class="check"><input type="checkbox" name="active" ${it.active ? 'checked' : ''}> Active (untick to archive: it disappears from lists but keeps its history)</label>`}`,
-    onOpen: d => wireDeptCat(d, it),
+    onOpen: d => wirePlaceFields(d, it),
     onSubmit: async data => {
       if (!data.name.trim()) throw new Error('Enter a description.');
-      const cat = await resolveCategory(data);
+      if (!data.sub_line_id) throw new Error('Choose the service line and sub service line.');
+      if (!data.kind) throw new Error('Choose the type.');
+      const p = { code: data.code, name: data.name, sub_line_id: +data.sub_line_id, kind: data.kind, subtype_id: data.subtype_id ? +data.subtype_id : null,
+        unit: data.unit, min_qty: data.min_qty, max_qty: data.max_qty, supplier: data.supplier, notes: data.notes, is_kit: !!data.is_kit,
+        service_idle_months: data.svc ? +data.svc : null };
       if (isNew) {
-        const id = await q(sb.rpc('create_item', { p_code: data.code, p_name: data.name, p_department: +data.department_id, p_category: cat,
-          p_type: data.item_type, p_unit: data.unit, p_min: num(data.min_qty), p_max: num(data.max_qty), p_supplier: data.supplier, p_notes: data.notes,
-          p_location: +data.location_id, p_qty: num(data.qty) || 0 }));
-        if (data.is_kit || data.svc) await q(sb.from('items').update({ is_kit: !!data.is_kit, service_idle_months: data.svc ? +data.svc : null }).eq('id', id));
+        if (data.department_id) p.department_id = +data.department_id;
+        if (num(data.qty) > 0) p.stock = [{ location_id: +data.location_id, qty: num(data.qty) }];
+        const id = await q(sb.rpc('item_save', { p }));
         toast('Item added'); invalidate(); go('#/item/' + id); return;
       }
-      await q(sb.from('items').update({ code: data.code.trim() || null, name: data.name.trim(), department_id: +data.department_id, category_id: cat,
-        item_type: data.item_type, unit: data.unit || 'pcs', min_qty: num(data.min_qty), max_qty: num(data.max_qty),
-        supplier: data.supplier || null, notes: data.notes || null, active: !!data.active, is_kit: !!data.is_kit, ...('service_idle_months' in it ? { service_idle_months: data.svc ? +data.svc : null } : {}) }).eq('id', it.id));
-      toast('Changes saved'); refresh();
+      p.id = it.id; p.active = !!data.active;
+      if (!('service_idle_months' in it)) delete p.service_idle_months;
+      await q(sb.rpc('item_save', { p }));
+      const moved = svcById(p.sub_line_id)?.department_id; toast(moved && moved !== it.department_id ? `Saved. ${lineName(moved)} now looks after this item.` : 'Changes saved'); invalidate(); refresh();
     }
   });
 }
 function bulkEdit(ids) {
   return modal({
     title: `Edit ${plural(ids.length, 'item')}`, sub: 'Only the fields you fill in will change.', submit: 'Apply to all',
-    body: `<label class="f">Type<select name="item_type"><option value="">No change</option>${Object.entries(TYPES).map(([k, v]) => opt(k, v)).join('')}</select></label>
+    body: `<p class="muted">To change the service line, type or sub-type, use <b>Move to…</b>.</p>
       <div class="row2"><label class="f">Reorder at (min)<input type="number" step="any" min="0" name="min_qty"></label>
       <label class="f">Restock up to (max)<input type="number" step="any" min="0" name="max_qty"></label></div>
       <div class="row2"><label class="f">Unit<input type="text" name="unit"></label><label class="f">OEM / supplier<input type="text" name="supplier"></label></div>
@@ -445,7 +523,6 @@ function bulkEdit(ids) {
       <label class="check"><input type="checkbox" name="clear_min"> Remove reorder levels from these items</label>`,
     onSubmit: async d => {
       const u = {};
-      if (d.item_type) u.item_type = d.item_type;
       if (d.min_qty !== '') u.min_qty = num(d.min_qty);
       if (d.max_qty !== '') u.max_qty = num(d.max_qty);
       if (d.clear_min) { u.min_qty = null; u.max_qty = null; }
@@ -463,7 +540,7 @@ function bulkEdit(ids) {
 ROUTES.item = {
   async load(parts) {
     const id = +parts[1];
-    const [it, stock, cos, units, certs, moves, comps, price, order, svc, svcLog, lastUse] = await Promise.all([
+    const [it, stock, cos, units, certs, moves, comps, price, order, svc, svcLog, lastUse, details] = await Promise.all([
       q(sb.from('item_overview').select('*').eq('id', id).maybeSingle()),
       q(sb.from('stock').select('*').eq('item_id', id).gt('qty', 0)),
       q(sb.from('checkouts').select('*, jobs(id,job_no)').eq('item_id', id).is('closed_at', null).order('out_at')),
@@ -476,6 +553,7 @@ ROUTES.item = {
       q(sb.from('service_status').select('*').eq('item_id', id).maybeSingle()).catch(() => null),
       q(sb.from('service_log').select('*').eq('item_id', id).order('serviced_at', { ascending: false }).limit(10)).catch(() => []),
       q(sb.from('checkouts').select('out_at').eq('item_id', id).order('out_at', { ascending: false }).limit(1)).catch(() => []),
+      isAdmin() ? q(sb.from('audit_log').select('at,user_name,action,old_data,new_data').eq('table_name', 'items').eq('record_id', String(id)).eq('action', 'update').order('at', { ascending: false }).limit(20)).catch(() => []) : Promise.resolve([]),
     ]);
     if (!it) return topbar('Item not found', 'It may have been removed.') + '<a class="btn" href="#/inventory">Back to inventory</a>';
     it.service_idle_months = svc?.service_idle_months ?? null;
@@ -492,7 +570,7 @@ ROUTES.item = {
     return `<a class="back" href="#/inventory">← Inventory</a>
       <div class="item-head"><div>${tag(it.code, 'big')}
         <h1>${esc(it.name)}</h1>
-        <div class="facts"><span class="linebadge">${esc(it.line || it.department)}</span><span>${esc(it.category)}</span><span>${TYPES[it.item_type]}</span>${it.is_kit ? '<span>Redress kit</span>' : ''}
+        <div class="facts"><span class="linebadge">${esc(it.svc_code || it.line || it.department)}</span><span>${esc(it.sub_line || it.department)}</span><span>${esc(kindLabel(it.kind))}</span>${it.subtype ? `<span>${esc(it.subtype)}</span>` : ''}<span class="sub">Team: ${esc(it.line || it.department)}</span>${it.is_kit ? '<span>Redress kit</span>' : ''}
           ${it.supplier ? `<span>OEM: ${esc(it.supplier)}</span>` : ''}${it.active ? '' : chip('muted', 'Archived')}</div></div>
         <div class="qr-mini">${qr}${isAdmin() ? `<button class="btn small" id="lbl">${ico('print')}Label</button>` : ''}</div></div>
       <div class="qtybar">
@@ -550,10 +628,12 @@ ROUTES.item = {
           ${units.map(u => `<tr><td class="name">${esc(u.serial_no || '—')}</td><td>${esc(u.lot_no || '—')}</td><td>${u.expiry_on ? `${dueChip(u.expiry_on, 60)} ${fd(u.expiry_on)}` : '—'}</td><td class="hide-m">${esc(u.supplier || '—')}</td>
             <td class="sub full">${esc(u.notes || '')}</td>${adm ? `<td class="num"><button class="btn small link" data-unit="${u.id}">Edit</button></td>` : ''}</tr>`).join('')}
           </tbody></table></div>` : `<div class="empty">Record serial numbers for traceability and per-unit certificates.${adm ? '' : ' Ask an admin to add them.'}</div>`}</section>` : ''}
-      <section class="panel"><header><h2>History</h2><span class="meta">latest ${moves.length}</span></header>
-        ${moves.length ? `<ul class="list">${moves.map(m => `<li><div style="flex:1;min-width:0"><div class="name" style="white-space:normal">${esc(describeMove(m))}</div>
-          <div class="sub">${[m.user_name, m.serials && 'S/N ' + m.serials, m.notes].filter(Boolean).map(esc).join(' · ')}</div></div>
-          <div class="end sub">${fdt(m.created_at)}</div></li>`).join('')}</ul>` : '<div class="empty">No history yet.</div>'}</section>`;
+      ${(() => { const hist = [...moves.map(m => ({ at: m.created_at, html: `<div class="name" style="white-space:normal">${esc(describeMove(m))}</div>
+          <div class="sub">${[m.user_name, m.serials && 'S/N ' + m.serials, m.notes].filter(Boolean).map(esc).join(' · ')}</div>` })),
+        ...(details || []).map(a => ({ a, txt: itemDetailChange(a) })).filter(x => x.txt).map(({ a, txt }) => ({ at: a.at, html: `<div class="name" style="white-space:normal">${esc(txt)}</div><div class="sub">${esc(a.user_name || '')} · details changed</div>` }))]
+        .sort((x, y) => String(y.at).localeCompare(String(x.at)));
+        return `<section class="panel"><header><h2>History</h2><span class="meta">latest ${hist.length}</span></header>
+        ${hist.length ? `<ul class="list">${hist.map(h => `<li><div style="flex:1;min-width:0">${h.html}</div><div class="end sub">${fdt(h.at)}</div></li>`).join('')}</ul>` : '<div class="empty">No history yet.</div>'}</section>`; })()}`;
   },
   bind(main) {
     const c = this.ctx; if (!c) return;
