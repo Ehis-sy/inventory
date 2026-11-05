@@ -70,8 +70,8 @@ const HR_WORK = [['leave', 'Leave'], ['requisition', 'Requisition'], ['performan
   ['redeployment', 'Redeployment'], ['disciplinary', 'Disciplinary'], ['onboarding', 'Onboarding'], ['exit', 'Exit'], ['surveys', 'Surveys']];
 // what each part will hold, and when it arrives (shown on pages that aren't built yet)
 const HR_SOON = {
-  leave: ['Leave', 'Your leave balances for each type, apply with a relief officer, your leave plan for the year, history, and your leave allowance status.', 'Next update'],
-  requisition: ['Requisition', 'Overtime, expense and service requests, each worked out and approved the way HR sets it up.', 'Next update'],
+  leave: ['Leave', 'Your leave balances for each type, apply with a relief officer, your leave plan for the year, history, and your leave allowance status.', 'Ready'],
+  requisition: ['Requisition', 'Overtime, expense and service requests, each worked out and approved the way HR sets it up.', 'Coming soon'],
   performance: ['Performance', 'Your objectives and progress, self-appraisal, your manager’s review and your final rating.', 'A later update'],
   competency: ['Competency', 'The skills your role needs, your assessed level and your gaps.', 'A later update'],
   promotion: ['Promotion', 'Promotions and salary reviews: your history and any recommendation in progress.', 'A later update'],
@@ -79,11 +79,11 @@ const HR_SOON = {
   disciplinary: ['Disciplinary', 'Queries addressed to you, your replies and the outcome. Private to you and HR.', 'A later update'],
   onboarding: ['Onboarding', 'Your onboarding checklist and your confirmation at the end of probation.', 'A later update'],
   exit: ['Exit', 'Resign, and follow your handover and clearance.', 'A later update'],
-  surveys: ['Surveys', 'Surveys HR sends you, and the anonymous mood check-in.', 'A later update'],
+  surveys: ['Surveys', 'Surveys HR sends you. The anonymous mood check-in is on Discover.', 'A later update'],
   pay: ['Pay', 'Your payslips, salary history and yearly tax summary. Amounts stay hidden until you tap the eye.', 'With Payroll'],
-  announcements: ['Announcements', 'News from HR and Admin, pinned notices, and policies to read and confirm.', 'Next update'],
-  policies: ['Policies & handbook', 'The staff handbook and company policies, published by HR.', 'Next update'],
-  holidays: ['Public holidays', 'This year’s public holidays, kept by HR.', 'Next update'] };
+  announcements: ['Announcements', 'News from HR and Admin, pinned notices, and policies to read and confirm.', 'Ready'],
+  policies: ['Policies & handbook', 'The staff handbook and company policies, published by HR.', 'Ready'],
+  holidays: ['Public holidays', 'This year’s public holidays, kept by HR.', 'Ready'] };
 const hrNavKey = parts => { const a = parts[1] || '', b = parts[2] || '';
   if (a === 'emp') return 'people/staff';
   if (['directory', 'org', 'company'].includes(a)) return 'people/company';
@@ -95,7 +95,7 @@ function peopleNav() {
     ...(inWork ? HR_WORK.map(([k, l]) => ['people/work/' + k, l, null]) : []),
     ['people/pay', 'Pay', 'pay'], ['people/approvals', 'Approvals', 'check'],
     ...(hrHasTeam() ? [['people/team', 'My team', 'users']] : []), ['people/company', 'Company', 'building']];
-  const setup = [...(isHR() ? [['people/staff', 'Staff records', 'audit']] : []), ...(isHRAdmin() ? [['people/settings', 'PeopleCore settings', 'gear']] : []),
+  const setup = [...(isHR() ? [['people/staff', 'Staff records', 'audit'], ['people/time', 'Time & pay', 'plan'], ['people/engage', 'Engage', 'bell']] : []), ...(isHRAdmin() ? [['people/settings', 'PeopleCore settings', 'gear']] : []),
     ...(isAdmin() ? [['team', 'Nest admin', 'users']] : [])];
   return { main, setup, setupLabel: 'HR' };
 }
@@ -125,17 +125,20 @@ ROUTES.people = {
   async load(parts, params) {
     await hrLookups();
     const p1 = parts[1] || '';
-    const pages = { '': hrHome, me: hrMePage, directory: hrDirPage, company: hrDirPage, team: hrTeamPage, approvals: hrApprPage, org: hrOrgPage, work: hrWorkPage, pay: hrSoonPage,
+    const pages = { '': typeof hrDiscover !== 'undefined' ? hrDiscover : hrHome, me: hrMePage, directory: hrDirPage, company: parts[2] && typeof hrCompanyAnn !== 'undefined' ? hrCompanyAnn : hrDirPage,
+      team: hrTeamPage, approvals: hrApprPage, org: hrOrgPage, work: parts[2] === 'leave' && typeof hrLeavePage !== 'undefined' ? hrLeavePage : hrWorkPage, pay: hrSoonPage,
+      time: typeof hrTimePage !== 'undefined' ? hrTimePage : null, engage: typeof hrEngagePage !== 'undefined' ? hrEngagePage : null,
       staff: typeof hrStaffPage !== 'undefined' ? hrStaffPage : null, emp: typeof hrEmpPage !== 'undefined' ? hrEmpPage : null, settings: typeof hrSettingsPage !== 'undefined' ? hrSettingsPage : null };
     this.page = pages[p1] || hrHome;
     peopleReshell(hrNavKey(parts));
+    if ((p1 === 'time' || p1 === 'engage') && !isHR()) return topbar('PeopleCore') + '<div class="notice">Only HR can see this.</div>';
     if ((p1 === 'staff' || p1 === 'emp') && !isHR()) return topbar('Staff records') + '<div class="notice">Only HR can see staff records.</div>';
     if (p1 === 'settings' && !isHRAdmin()) return topbar('PeopleCore settings') + '<div class="notice">Only HR admins can change PeopleCore settings. Ask the Super Admin if you need it.</div>';
     return this.page.load(parts, params);
   },
   bind(main, parts, params) {
     const p1 = parts[1] || '';
-    if (((p1 === 'staff' || p1 === 'emp') && !isHR()) || (p1 === 'settings' && !isHRAdmin())) return;
+    if (((p1 === 'staff' || p1 === 'emp' || p1 === 'time' || p1 === 'engage') && !isHR()) || (p1 === 'settings' && !isHRAdmin())) return;
     this.page.bind && this.page.bind(main, parts, params);
   }
 };
@@ -403,7 +406,8 @@ const hrTeamPage = {
         <td>${t.mobile ? `<a href="tel:${esc(t.mobile)}">${esc(t.mobile)}</a>` : t.work_phone ? esc(t.work_phone) : '—'}</td>
         ${mf.map(x => `<td>${esc(t.custom?.[x.key] ?? '')}</td>`).join('')}</tr>`; };
     const table = (rows) => `<div class="tablewrap"><table class="t stack"><thead><tr><th>Name</th><th>Position</th><th>Location</th><th>Type</th><th>Started</th><th>Confirmation</th><th>Phone</th>${mf.map(x => `<th>${esc(x.label)}</th>`).join('')}</tr></thead><tbody>${rows.map(row).join('')}</tbody></table></div>`;
-    return topbar('My team', 'The people who report to you. You approve their requests as their line manager.') +
+    const cal = team.length && typeof hrTeamCalendar === 'function' ? await hrTeamCalendar(team.map(t => ({ ...t, title: t.title })), 2) : '';
+    return topbar('My team', 'The people who report to you. You approve their requests as their line manager.') + cal +
       (team.length ? `<section class="panel"><header><h2>Direct reports</h2><span class="meta">${direct.length}</span></header>${direct.length ? table(direct) : '<div class="empty">None.</div>'}</section>
         ${others.length ? `<section class="panel"><header><h2>Further down your line</h2><span class="meta">${others.length}</span></header>${table(others)}</section>` : ''}`
         : '<div class="panel"><div class="empty">Nobody reports to you in PeopleCore.</div></div>');
@@ -437,6 +441,19 @@ const hrApprPage = {
     $$('#atabs button', main).forEach(b => b.onclick = () => go('#/people/approvals?tab=' + b.dataset.t));
     $$('#st button', main).forEach(b => b.onclick = () => go('#/people/approvals?tab=all' + (b.dataset.s ? '&st=' + b.dataset.s : '')));
     $$('[data-cancel]', main).forEach(x => x.onclick = () => hrCancelReq(+x.dataset.cancel));
+    // leave: balance after, back at work, team clashes and jobs on those dates
+    $$('[data-linfo]', main).forEach(async el => {
+      try { const i = await q(sb.rpc('hr_leave_info', { p_req: +el.dataset.linfo })); if (!i) return; const card = el.closest('.hr-appr');
+        const b = i.balance; const l = i.leave; const after = b && b.left != null ? +b.left - (+b.pending - 0) : null;
+        const bk = $('[data-lback]', card); if (bk) bk.textContent = i.back ? fd(i.back) : '—';
+        const bl = $('[data-lbal]', card); if (bl) bl.innerHTML = b ? (b.unlimited ? 'No set limit' : `<b>${Math.round((+b.left - +b.pending) * 10) / 10}</b> of ${+b.entitled + +b.carried + +b.adjusted} days left after this and other waiting requests`) : '—';
+        const notes = [];
+        if (i.team_out.length) notes.push(`<b>Team clash:</b> ${i.team_out.map(t => `${esc(t.name)} (${fd(t.from)}${t.to !== t.from ? ' – ' + fd(t.to) : ''})`).join(', ')} ${i.team_out.length === 1 ? 'is' : 'are'} also off then${i.team_size ? `: ${i.team_out.length + 1} of ${i.team_size} in the team` : ''}.`);
+        if (i.jobs.length) notes.push(`<b>On a job:</b> they’re on the crew for ${i.jobs.map(j => `${esc(j.job_no)} ${esc(j.field || j.title || '')} as ${esc(j.designation)} (${fd(j.from)} – ${fd(j.to)})`).join('; ')}.`);
+        el.innerHTML = notes.length ? notes.map(n => `<div class="notice small">${ico('plan')}<span>${n}</span></div>`).join('')
+          : `<div class="notice small good">${ico('check')}<span>No clash: nobody else in ${i.team_size ? 'the team' : 'their team'} is off then, and they’re not on a job crew for those dates.</span></div>`;
+      } catch (e) { el.innerHTML = ''; }
+    });
     $$('[data-ok]', main).forEach(b => b.onclick = async () => {
       b.disabled = true;
       try { const r = await q(sb.rpc('hr_request_decide', { p_id: +b.dataset.ok, p_approve: true, p_note: $(`[data-note="${b.dataset.ok}"]`, main)?.value || null }));
@@ -453,12 +470,17 @@ function hrApprCard(r) {
   const changes = Object.entries(p.changes || {}).map(([k, v]) => k === 'photo' ? `<dt>Photo</dt><dd><span class="hr-av lg"><img src="${esc(v)}" alt=""></span></dd>` : `<dt>${esc(HR_LABEL[k] || k)}</dt><dd>${v ? esc(v) : '<span class="sub">(clear it)</span>'}</dd>`).join('');
   const priv = Object.entries(p.private || {}).map(([k, v]) => `<dt>${ico('lock')}${esc(HR_LABEL[k] || k)}</dt><dd>${v ? esc(v) : '<span class="sub">(clear it)</span>'}</dd>`).join('');
   const kin = p.kin ? `<dt>Next of kin</dt><dd>${p.kin.length ? p.kin.map(k => `${esc(k.name)} <span class="sub">(${k.kind === 'emergency' ? 'emergency' : 'next of kin'}${k.relationship ? ', ' + esc(k.relationship) : ''}${k.phone ? ', ' + esc(k.phone) : ''})</span>`).join('<br>') : '<span class="sub">(remove all)</span>'}</dd>` : '';
-  const other = r.kind !== 'profile_change' ? Object.entries(p).filter(([k]) => k !== 'note').map(([k, v]) => `<dt>${esc(k)}</dt><dd>${esc(typeof v === 'object' ? JSON.stringify(v) : v)}</dd>`).join('') : '';
+  const other = r.kind === 'leave' ? `<dt>Leave</dt><dd><b>${esc(p.type || '')}</b></dd><dt>Dates</dt><dd>${esc(fd(p.start))}${p.end !== p.start ? ' – ' + esc(fd(p.end)) : ''} · <b>${p.days} ${p.days == 1 ? 'day' : 'days'}</b></dd>
+      ${p.relief ? `<dt>Relief officer</dt><dd>${esc(p.relief)}</dd>` : ''}${p.reason ? `<dt>Reason</dt><dd>${esc(p.reason)}</dd>` : ''}<dt>Back at work</dt><dd data-lback>…</dd><dt>Balance after</dt><dd data-lbal>…</dd>`
+    : r.kind !== 'profile_change' ? Object.entries(p).filter(([k]) => k !== 'note').map(([k, v]) => `<dt>${esc(k)}</dt><dd>${esc(typeof v === 'object' ? JSON.stringify(v) : v)}</dd>`).join('') : '';
+  const relief = step?.who === 'relief';
   return `<section class="panel hr-appr"><header>${hrAv(hrCard(r.employee_id) || { name: r.who })}<div><h2>${esc(r.title)}</h2><div class="sub">${esc(r.who || '')} · ${HR_REQ[r.kind] || esc(r.kind)} · sent ${fdt(r.created_at)}</div></div>
       <div class="right">${chip('pending', 'Step ' + (r.step + 1) + ' of ' + r.steps.length + ': ' + (step?.label || ''))}</div></header>
     <div class="body">${hrStepsBar({ steps: r.steps, current_step: r.step, status: 'pending' })}
       <dl class="kv mt">${changes}${priv}${kin}${other}${p.note ? `<dt>Their note</dt><dd>${esc(p.note)}</dd>` : ''}</dl>
-      <div class="hr-decide"><input data-note="${r.id}" placeholder="Note (optional)"><button class="btn" data-no="${r.id}">Don’t approve</button><button class="btn primary" data-ok="${r.id}">${ico('check')}Approve</button></div></div></section>`;
+      ${r.kind === 'leave' ? `<div data-linfo="${r.id}"></div>` : ''}
+      ${relief ? '<p class="sub">You’re named as the relief officer: accept if you can cover while they’re away. Then it goes to their manager.</p>' : ''}
+      <div class="hr-decide"><input data-note="${r.id}" placeholder="Note (optional)"><button class="btn" data-no="${r.id}">${relief ? 'Decline' : 'Don’t approve'}</button><button class="btn primary" data-ok="${r.id}">${ico('check')}${relief ? 'Accept' : 'Approve'}</button></div></div></section>`;
 }
 
 // ================================================================ ORG CHART
@@ -541,6 +563,7 @@ const hrWorkPage = {
     const me = hrMe();
     if (!me) return topbar('Work') + `<div class="notice">HR hasn’t added your PeopleCore record yet, or it isn’t linked to your sign-in. Ask HR.</div>`;
     const c = me.card || {}; const done = hrProfileDone(me);
+    this.bal = typeof thisYear === 'function' ? await q(sb.rpc('hr_leave_balances', { p_emp: me.id, p_year: thisYear() })).catch(() => []) : [];
     const reqs = this.reqs = await q(sb.from('hr_requests').select('id,kind,title,status,created_at,steps,current_step,employee_id').eq('employee_id', me.id).eq('status', 'pending').order('created_at', { ascending: false }));
     const qa = (icon, label, k) => `<a href="#/people/work/${k}">${ico(icon)}${label}</a>`;
     return `<section class="panel hr-wcard"><div class="body">${hrAv(c, 'xl')}
@@ -551,6 +574,8 @@ const hrWorkPage = {
       ${done.pct < 100 ? `<section class="hr-complete"><span class="hr-ring" style="--p:${done.pct}"><b>${done.pct}%</b></span><div><div class="t">Complete your profile</div><div class="sub">Still missing: ${esc(done.missing.slice(0, 4).join(', '))}${done.missing.length > 4 ? ` and ${done.missing.length - 4} more` : ''}. HR checks every change.</div></div>
         <a class="btn small primary" href="#/people/me">Complete it</a></section>` : ''}
       <section class="hr-qa">${qa('plan', 'Apply for leave', 'leave')}${qa('clock', 'Raise overtime', 'requisition')}${qa('plus', 'New requisition', 'requisition')}${qa('move', 'Request redeployment', 'redeployment')}</section>
+      ${this.bal?.length ? `<section class="panel"><header><h2>My leave</h2><span class="meta">${thisYear()} · resets 1 January</span><div class="right"><a class="btn small" href="#/people/work/leave">Leave plan &amp; history</a></div></header>
+        <div class="leaves">${this.bal.filter(b => !b.why_not && !b.unlimited).map(b => { const tot = +b.entitled + +b.carried - +b.lapsed + +b.adjusted; return `<div class="lv"><div class="t">${esc(b.name)}</div><div class="n">${+b.left} <small>of ${tot} days left</small></div><div class="bar"><i style="width:${tot ? Math.max(0, Math.min(100, b.left / tot * 100)) : 0}%"></i></div><a href="#/people/work/leave?apply=1">Apply →</a></div>`; }).join('')}</div></section>` : ''}
       <section class="panel"><header><h2>My open requests</h2><span class="meta">${reqs.length}</span><div class="right"><a class="btn small" href="#/people/approvals?tab=mine">All requests</a></div></header>
         ${reqs.length ? `<ul class="list">${reqs.map(hrReqLi).join('')}</ul>` : '<div class="empty">Nothing waiting.</div>'}</section>
       <section class="panel"><header><h2>My work</h2><span class="meta">Everything about your job in PeopleCore</span></header>

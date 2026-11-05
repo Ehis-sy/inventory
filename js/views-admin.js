@@ -430,10 +430,11 @@ ROUTES.settings = {
   async load() {
     if (!isSuper()) return topbar('Nest settings') + '<div class="notice">Only the Super Admin can change settings.</div>';
     await loadLookups();
-    return topbar('Nest settings', 'These apply to every app. Each app’s own settings are in that app’s menu: Inventory settings, and PO settings in the Purchase Order app.') +
+    return topbar('Nest settings', 'These apply to every app. Open a section to change it. Each app’s own settings are in that app’s menu: Inventory settings, and PO settings in the Purchase Order app.') +
       `${typeof companyPanel === 'function' ? companyPanel() : ''}${await svcPanel()}${await alertsPanel()}${maintPanel()}${backupPanel()}`;
   },
   bind(main) { if (typeof bindCompanyPanel === 'function') bindCompanyPanel(main); bindSvcPanel(main); bindBackup(main); bindAlertsPanel(main); bindMaintPanel(main);
+    settingsAccordion(main, 'settings');
     if (location.hash.includes('#svc')) setTimeout(() => $('#svc', main)?.scrollIntoView({ block: 'start' }), 50); }
 };
 // Inventory settings (2.8): count dates, warnings and the QMS form details
@@ -442,26 +443,25 @@ ROUTES.invsettings = {
     if (!isAdmin()) return topbar('Inventory settings') + '<div class="notice">Only admins and the Super Admin can change Inventory settings.</div>';
     await loadLookups(); await items();
     const s = k => esc(setting(k, ''));
-    return topbar('Inventory settings', 'These apply to everyone using Inventory.') + subtypePanel() + (!isSuper() ? '' : `<form id="sf" class="cols">
-      <section class="panel"><header><h2>Monthly count</h2></header><div class="body">
+    return topbar('Inventory settings', 'These apply to everyone using Inventory.') + subtypePanel() + (!isSuper() ? '' : `<form id="sf">
+      <section class="panel"><header><h2>Monthly count</h2><span class="meta">Opens on day ${s('count_open_day')} · deadline day ${s('count_close_day')}</span></header><div class="body">
         <div class="row2"><label class="f">Count opens on day<input type="number" min="1" max="28" name="count_open_day" value="${s('count_open_day')}"></label>
-        <label class="f">Deadline (end of day)<input type="number" min="1" max="28" name="count_close_day" value="${s('count_close_day')}"></label></div></div></section>
-      <section class="panel"><header><h2>Alerts</h2></header><div class="body">
+        <label class="f">Deadline (end of day)<input type="number" min="1" max="28" name="count_close_day" value="${s('count_close_day')}"></label></div><div class="acc-save"><button class="btn primary" type="submit">Save settings</button></div></div></section>
+      <section class="panel"><header><h2>Alerts</h2><span class="meta">Kits ${s('kit_warn_days')} days ahead · certificates ${s('cert_warn_days')} days ahead</span></header><div class="body">
         <div class="row2"><label class="f">Warn about kit expiry (days ahead)<input type="number" min="1" name="kit_warn_days" value="${s('kit_warn_days')}"></label>
-        <label class="f">Warn about certificates (days ahead)<input type="number" min="1" name="cert_warn_days" value="${s('cert_warn_days')}"></label></div></div></section>
-      <section class="panel"><header><h2>QMS form details on reports</h2></header><div class="body">
+        <label class="f">Warn about certificates (days ahead)<input type="number" min="1" name="cert_warn_days" value="${s('cert_warn_days')}"></label></div><div class="acc-save"><button class="btn primary" type="submit">Save settings</button></div></div></section>
+      <section class="panel"><header><h2>QMS form details on reports</h2><span class="meta">${setting('form_ref', '') ? 'Ref ' + s('form_ref') + ' · Rev ' + s('form_revision') : 'Not filled in'}</span></header><div class="body">
         <label class="f">Ref No.<input type="text" name="form_ref" value="${s('form_ref')}"></label>
-        <div class="row2"><label class="f">Issue date<input type="text" name="form_issue" value="${s('form_issue')}"></label><label class="f">Revision<input type="text" name="form_revision" value="${s('form_revision')}"></label></div></div></section>
-      <div><button class="btn primary" type="submit">Save settings</button></div></form>`);
+        <div class="row2"><label class="f">Issue date<input type="text" name="form_issue" value="${s('form_issue')}"></label><label class="f">Revision<input type="text" name="form_revision" value="${s('form_revision')}"></label></div><div class="acc-save"><button class="btn primary" type="submit">Save settings</button></div></div></section></form>`);
   },
   bind(main) {
-    bindSubtypePanel(main);
+    bindSubtypePanel(main); settingsAccordion(main, 'invsettings');
     const f = $('#sf', main); if (!f) return;
     f.onsubmit = async e => {
       e.preventDefault(); const d = Object.fromEntries(new FormData(f));
       if (+d.count_open_day > +d.count_close_day) return toast('The count must open before the deadline.', true);
       const rows = Object.entries(d).map(([key, v]) => ({ key, value: ['form_ref', 'form_issue', 'form_revision'].includes(key) ? String(v) : +v }));
-      try { await q(sb.from('app_settings').upsert(rows)); await loadLookups(); toast('Settings saved'); } catch (ex) { toast(niceError(ex), true); }
+      try { await q(sb.from('app_settings').upsert(rows)); await loadLookups(); toast('Settings saved'); render({ quiet: true }); } catch (ex) { toast(niceError(ex), true); }
     };
   }
 };

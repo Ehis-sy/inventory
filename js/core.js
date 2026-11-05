@@ -77,7 +77,8 @@ const realLocs = () => S.locs.filter(l => l.active && !l.is_placeholder);
 const personName = (id, fallback = '') => { const p = S.people[id]; return p ? (p.full_name || p.email) : fallback; };
 const setting = (k, d) => S.settings[k] ?? d;
 // 2.8: which apps a person can open (the Super Admin always has all of them)
-const appAllowed = app => realSuper() || (S.profile?.apps || []).includes(app);
+// 3.0.3: while viewing as a role, apps follow that role (Inventory and PO; PeopleCore only for the Super Admin until go-live)
+const appAllowed = app => (S.viewAs && realSuper()) ? (S.viewAs.role === 'superadmin' || ['inventory', 'po'].includes(app)) : (realSuper() || (S.profile?.apps || []).includes(app));
 const ADMIN_ROUTES = ['team', 'audit', 'settings'];
 
 // "View as" is read-only: block every write while it's on
@@ -149,7 +150,7 @@ function loadScript(src) {
   return p;
 }
 function parseHash() {
-  const h = location.hash.replace(/^#\/?/, '');
+  const h = location.hash.replace(/^#\/?/, '').split('#')[0];
   const [path, qs] = h.split('?');
   return { parts: path.split('/').filter(Boolean), params: new URLSearchParams(qs || '') };
 }
@@ -188,6 +189,7 @@ const I = {
   pdf: '<path d="M6 2h9l5 5v15H6z"/><path d="M15 2v5h5M9 13h6M9 17h4"/>',
   edit: '<path d="M4 20h4L19 9l-4-4L4 16z"/><path d="M14 6l4 4"/>',
   move: '<path d="M5 12h14M15 8l4 4-4 4M9 16l-4-4 4-4"/>',
+  eye: '<path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12z"/><circle cx="12" cy="12" r="3"/>',
   compass: '<circle cx="12" cy="12" r="9"/><path d="M15.5 8.5l-2 5-5 2 2-5z"/>',
   pay: '<rect x="2" y="6" width="20" height="13" rx="2"/><circle cx="12" cy="12.5" r="2.8"/><path d="M6 9.5h.01M18 15.5h.01"/>',
   building: '<path d="M3 21V8l9-5 9 5v13"/><path d="M9 21v-6h6v6"/>',
@@ -596,6 +598,38 @@ async function render(opts = {}) {
   }
 }
 window.addEventListener('hashchange', () => render());
+
+// 3.0.3: settings pages show each section as a bar; opening one closes the others. The open one stays open after a save.
+const ACC = { page: null, open: null, seq: 0 };
+function settingsAccordion(main, page) {
+  const secs = $$('section.panel', main).filter(x => !x.parentElement.closest('section.panel'));
+  if (secs.length < 2) return;
+  const first = ACC.page !== page || ACC.seq !== renderSeq - 1; ACC.seq = renderSeq; if (first) { ACC.page = page; ACC.open = null; }
+  const anchor = location.hash.split('#')[2] || '';
+  secs.forEach((x, i) => { x.dataset.acc = x.id || 'p' + i; });
+  if (first && anchor && secs.some(x => x.dataset.acc === anchor)) ACC.open = anchor;
+  const head = x => x.querySelector(':scope > header');
+  const name = x => (head(x)?.querySelector('h2')?.textContent || 'this section').trim();
+  const apply = () => secs.forEach(x => { const on = x.dataset.acc === ACC.open; x.classList.toggle('open', on); head(x)?.setAttribute('aria-expanded', on); });
+  const toggle = x => {
+    const cur = secs.find(y => y.dataset.acc === ACC.open && y.dataset.dirty === '1');
+    const next = ACC.open === x.dataset.acc ? null : x.dataset.acc;
+    if (cur) { if (!confirm(`You have unsaved changes in ${name(cur)}. Close it and lose them?`)) return; ACC.open = next; return render({ quiet: true }); }
+    ACC.open = next; apply();
+    if (next) setTimeout(() => { const r = x.getBoundingClientRect(); if (r.top < 70 || r.top > innerHeight - 120) x.scrollIntoView({ block: 'start', behavior: 'smooth' }); }, 30);
+  };
+  secs.forEach(x => {
+    x.classList.add('acc'); const h = head(x); if (!h) return;
+    h.tabIndex = 0; h.setAttribute('role', 'button'); h.insertAdjacentHTML('beforeend', '<span class="acc-chev" aria-hidden="true"></span>');
+    h.addEventListener('click', e => { if (e.target.closest('button, a, input, select, textarea, label')) return; toggle(x); });
+    h.addEventListener('keydown', e => { if ((e.key === 'Enter' || e.key === ' ') && e.target === h) { e.preventDefault(); toggle(x); } });
+    const mark = e => { const t = e.target; if (t.closest('header') || t.type === 'file' || !t.form || !t.form.querySelector('[type=submit]')) return; x.dataset.dirty = '1'; };
+    x.addEventListener('input', mark); x.addEventListener('change', mark);
+    const clear = e => { secs.forEach(y => { if (e.target.contains(y) || y.contains(e.target)) y.dataset.dirty = ''; }); };
+    x.addEventListener('submit', clear, true); const f = x.closest('form'); if (f) f.addEventListener('submit', clear, true);
+  });
+  apply();
+}
 const refresh = () => { invalidate(); refreshAlerts(); render({ quiet: true }); };
 
 function topbar(title, sub = '', actions = '') {

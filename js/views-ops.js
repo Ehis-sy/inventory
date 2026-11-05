@@ -80,9 +80,13 @@ ROUTES.job = {
       q(sb.from('job_sections').select('*').eq('job_id', id)),
       items(), stockRows(),
     ]);
+    // 3.0.3: the crew on this job (names come from the staff list: names and positions only)
+    const [crew, staff] = await Promise.all([q(sb.from('job_crew').select('*').eq('job_id', id).order('sort')).catch(() => []), jobStaff()]);
     if (!j) return topbar('Request not found') + '<a class="btn" href="#/jobs">Back to materials requests</a>';
     const moves = j.status !== 'draft' && lines.some(l => l.checkout_id) ? await q(sb.from('movements').select('type,qty,checkout_id,to_status').in('checkout_id', lines.map(l => l.checkout_id).filter(Boolean)).in('type', ['return', 'issue', 'sale', 'lost'])) : [];
-    this.ctx = { j, lines, secs, moves };
+    this.ctx = { j, lines, secs, moves, crew, staff };
+    const crewCan = !readOnly() && j.status !== 'cancelled' && (isSuper() || j.requester_id === S.profile.id || j.created_by === S.profile.id || lines.some(l => canAdmin(l.items?.department_id)) || secs.some(s => canAdmin(s.department_id)));
+    this.crewCan = crewCan;
     const draft = j.status === 'draft';
     const canReturn = ['out', 'partial'].includes(j.status) && lines.some(l => l.checkouts && !l.checkouts.closed_at);
     const isRequester = !S.viewAs && j.requester_id === S.profile.id;
@@ -123,6 +127,7 @@ ROUTES.job = {
       ${draft ? `<div class="notice">Draft: nothing has left the store. Add the items, then press <b>Submit request</b>. Each service line’s admin approves and issues its own items${lineIds.some(d => canAdmin(d)) ? ' (items from lines you look after are issued as soon as you submit)' : ''}.</div>` : ''}
       ${j.status === 'partial' ? `<div class="notice">Partly issued: some service lines have issued their items; others are still waiting for their admin.${isRequester ? ' You can confirm receipt once every line has been issued or rejected.' : ''}</div>` : ''}
       ${canConfirm ? `<div class="notice">You’re the requester. Check the items you were given against the list, then press <b>Confirm receipt</b> to sign the Requester box on the Load-out Manifest.</div>` : ''}
+      ${crewPanel(j, crew, staff, crewCan)}
       ${lines.length ? lineIds.map(section).join('') : `<section class="panel"><div class="empty">No items yet. Press <b>Add items</b> and search or scan what’s needed. You can also tick items on the Inventory page and choose <b>Add to materials request</b>.</div></section>`}
       ${j.notes ? `<section class="panel"><div class="body">${esc(j.notes)}</div></section>` : ''}`;
   },
@@ -162,7 +167,8 @@ ROUTES.job = {
           <div class="sigpaper mt">${img ? `<img src="${img.dataUrl}" alt="">` : ''}<div class="sigline"></div><div class="signame">${esc(S.profile.full_name || S.profile.email)}</div><div class="sub">${esc(S.profile.job_title || '')}</div><div class="sub">Requester</div></div>`,
         onSubmit: async () => { await q(sb.rpc('confirm_receipt', { p_job: j.id })); toast('Receipt confirmed and signed'); refresh(); } });
     };
-    if (b('#manifest')) b('#manifest').onclick = () => jobManifest(j, lines, this.ctx.moves, secs);
+    if (b('#manifest')) b('#manifest').onclick = () => jobManifest(j, lines, this.ctx.moves, secs, this.ctx.crew, this.ctx.staff);
+    if (b('#crew')) b('#crew').onclick = () => editCrew(j, this.ctx.crew, this.ctx.staff);
     $$('[data-del]', main).forEach(x => x.onclick = async () => { try { await q(sb.from('job_lines').delete().eq('id', +x.dataset.del)); render({ quiet: true }); } catch (e) { toast(niceError(e), true); } });
   }
 };
@@ -268,7 +274,55 @@ function jobReturn(j, lines) {
   });
 }
 
-async function jobManifest(j, lines, moves = [], secs = []) {
+// ================================================================ 3.0.3: JOB CREW (who goes out on the job)
+const LOC_TYPES = { onshore: 'Onshore', offshore: 'Offshore', swamp: 'Swamp' };
+let JOB_STAFF = { at: 0, list: [] };
+async function jobStaff() {
+  if (JOB_STAFF.at && Date.now() - JOB_STAFF.at < 120000) return JOB_STAFF.list;
+  try { JOB_STAFF = { at: Date.now(), list: await q(sb.rpc('job_staff_list')) }; } catch (e) { JOB_STAFF = { at: 0, list: [] }; }
+  return JOB_STAFF.list;
+}
+const crewKey = c => c.employee_id ? 'e:' + c.employee_id : c.profile_id ? 'p:' + c.profile_id : '';
+const crewWho = (c, staff) => { const k = crewKey(c); if (!k) return { name: c.external_name, title: 'External', ext: true }; const s = staff.find(x => x.key === k); return s ? { name: s.name, title: s.title } : { name: 'Former staff', title: '' }; };
+const crewDates = (c, j) => { const f = c.from_date || j.start_date, t = c.to_date || j.expected_return; return f || t ? `${f ? fd(f) : '…'} – ${t ? fd(t) : '…'}` : '—'; };
+function crewPanel(j, crew, staff, can) {
+  return `<section class="panel crewpanel"><header><h2>${ico('users')}Crew</h2><span class="meta">${crew.length ? plural(crew.length, 'person', 'people') : 'Nobody added yet'}${j.location_type ? ' · ' + esc(LOC_TYPES[j.location_type]) : ''}</span>
+      ${can ? `<div class="right"><button class="btn small ${crew.length ? '' : 'primary'}" id="crew">${ico('edit')}${crew.length ? 'Edit crew' : 'Add the crew'}</button></div>` : ''}</header>
+    ${crew.length ? `<div class="tablewrap"><table class="t stack"><thead><tr><th>Name</th><th>Designation on this job</th><th>On the job</th></tr></thead><tbody>
+      ${crew.map(c => { const w = crewWho(c, staff); return `<tr><td class="full"><span class="name">${esc(w.name)}</span> ${w.ext ? chip('muted', 'External') : `<span class="sub">${esc(w.title || '')}</span>`}</td><td><b>${esc(c.designation)}</b></td><td>${crewDates(c, j)}</td></tr>`; }).join('')}
+      </tbody></table></div>` : `<div class="empty">${can ? 'Add everyone going out on this job, with their designation. They show as “On a job” in PeopleCore, and the crew prints on the Load-out Manifest.' : 'The team lead hasn’t added the crew yet.'}</div>`}</section>`;
+}
+function editCrew(j, crew, staff) {
+  let rows = crew.map(c => ({ key: crewKey(c) || 'x', external_name: c.external_name || '', designation: c.designation, from_date: c.from_date || '', to_date: c.to_date || '' }));
+  if (!rows.length) rows.push({ key: S.people[j.requester_id] ? (staff.find(s => s.key === 'p:' + j.requester_id) || {}).key || '' : '', designation: '', from_date: '', to_date: '' });
+  const opts = sel => `<option value="">Choose…</option>${staff.map(s => opt(s.key, s.name + (s.title ? ' · ' + s.title : ''), sel)).join('')}<option value="x" ${sel === 'x' ? 'selected' : ''}>Someone from outside (type the name)…</option>`;
+  const row = (r, i) => `<div class="crewrow" data-i="${i}"><select data-k="key">${opts(r.key)}</select>
+    <input type="text" data-k="external_name" placeholder="Name (contractor, client…)" value="${esc(r.external_name || '')}" ${r.key === 'x' ? '' : 'hidden'}>
+    <input type="text" data-k="designation" placeholder="Designation on this job *" value="${esc(r.designation || '')}">
+    <input type="date" data-k="from_date" value="${esc(r.from_date || '')}" title="From (blank = the job’s start)"><input type="date" data-k="to_date" value="${esc(r.to_date || '')}" title="To (blank = the job’s return date)">
+    <button type="button" class="btn small link danger" data-rm="${i}" title="Remove">✕</button></div>`;
+  const read = d => { rows = $$('.crewrow', d).map(el => Object.fromEntries($$('[data-k]', el).map(x => [x.dataset.k, x.value.trim()]))); };
+  const draw = d => { const box = $('#crewrows', d); box.innerHTML = rows.map(row).join('') || '<div class="sub">Nobody yet.</div>';
+    $$('[data-k="key"]', box).forEach(x => x.onchange = () => { read(d); draw(d); });
+    $$('[data-rm]', box).forEach(x => x.onclick = () => { read(d); rows.splice(+x.dataset.rm, 1); draw(d); }); };
+  return modal({ title: 'Crew on this job', wide: true, submit: 'Save crew',
+    sub: `${esc(j.job_no)} · ${esc(j.title)}. Add everyone going out, with their designation on this job. Dates are only needed for someone joining late or leaving early${j.start_date || j.expected_return ? ` (the job runs ${j.start_date ? fd(j.start_date) : '…'} – ${j.expected_return ? fd(j.expected_return) : '…'})` : ''}.`,
+    body: `<div class="f">Location<div class="segi">${Object.entries(LOC_TYPES).map(([k, l]) => `<label><input type="radio" name="loc" value="${k}" ${j.location_type === k ? 'checked' : ''}><span>${l}</span></label>`).join('')}</div></div>
+      <div class="crewhead"><span>Person</span><span>Designation</span><span>From</span><span>To</span></div><div id="crewrows" class="crewrows"></div>
+      <button type="button" class="btn small" id="crewadd">${ico('plus')}Add a person</button>
+      ${staff.some(s => s.key.startsWith('e:')) ? '' : '<p class="sub mt">The PeopleCore staff list isn’t loaded yet, so you’re choosing from Nest users. Use “Someone from outside” for anyone else.</p>'}`,
+    onOpen: d => { draw(d); $('#crewadd', d).onclick = () => { read(d); rows.push({ key: '', designation: '' }); draw(d); }; },
+    onSubmit: async (x, d) => {
+      read(d);
+      const list = rows.filter(r => r.key || r.external_name || r.designation).map(r => ({ key: r.key === 'x' ? '' : r.key, external_name: r.key === 'x' ? r.external_name : '', designation: r.designation, from_date: r.from_date, to_date: r.to_date }));
+      list.forEach((r, i) => { if (!r.key && !r.external_name) throw new Error(`Row ${i + 1}: choose the person, or type the name of someone from outside.`); if (!r.designation) throw new Error(`Row ${i + 1}: write the designation (it’s needed for everyone).`); });
+      const keys = list.map(r => r.key).filter(Boolean); if (new Set(keys).size !== keys.length) throw new Error('Someone is on the list twice.');
+      await q(sb.rpc('job_crew_save', { p_job: j.id, p_location_type: x.loc || '', p_rows: list }));
+      toast(list.length ? `Crew saved: ${plural(list.length, 'person', 'people')}` : 'Crew cleared'); render({ quiet: true });
+    } });
+}
+
+async function jobManifest(j, lines, moves = [], secs = [], crew = [], staff = []) {
   try {
     toast('Preparing the PDF…');
     const tally = (l, type, st) => moves.filter(m => m.checkout_id === l.checkout_id && m.type === type && (!st || m.to_status === st)).reduce((a, m) => a + +m.qty, 0);
@@ -289,11 +343,15 @@ async function jobManifest(j, lines, moves = [], secs = []) {
     const [secEv, rcEv] = await Promise.all([signEvents('job_section', secs.map(s => s.id)), signEvents('job_receipt', j.id)]);
     await brandPdf({
       file: `${j.job_no}_Load-out_Manifest.pdf`, title: 'Load-out Manifest', subtitle: `${j.job_no} · ${j.title}`,
-      meta: [['Request', j.job_no], ['Requester', j.requester_name || '—'], ['Client', j.client || '—'], ['Field / site', j.field || j.title], ['Leaves from', locName(j.base_location_id)],
+      meta: [['Request', j.job_no], ['Requester', j.requester_name || '—'], ['Client', j.client || '—'], ['Field / site', j.field || j.title], ['Leaves from', locName(j.base_location_id)], ...(j.location_type ? [['Location', LOC_TYPES[j.location_type]]] : []),
         ['First issued', j.dispatched_at ? fdt(j.dispatched_at) : 'Not yet'], ['Expected back', j.expected_return ? fd(j.expected_return) : '—']],
       kpis: [{ label: 'Lines', value: lines.length }, { label: 'Total pieces', value: fq(lines.reduce((a, l) => a + +l.qty, 0)) }, ...(pending ? [{ label: 'Lines not yet issued', value: pending, tone: 'warn' }] : [])],
       intro: `${j.title}${j.client ? ' for ' + j.client : ''}. Check every item against this list when loading and again on return.${pending ? ' Sections marked “waiting for approval” have not been issued and must not be loaded.' : ''}`,
-      sections,
+      sections: [...sections, ...(crew.length ? [{ heading: 'Crew (POB)', headingNote: `${plural(crew.length, 'person', 'people')}${j.location_type ? ' · ' + LOC_TYPES[j.location_type] : ''}`,
+        columns: [{ header: '#', dataKey: 'n', width: 8 }, { header: 'Name', dataKey: 'name', bold: true }, { header: 'Designation on this job', dataKey: 'des' }, { header: 'Staff / external', dataKey: 'kind', width: 34 },
+          { header: 'From', dataKey: 'from', width: 28 }, { header: 'To', dataKey: 'to', width: 28 }],
+        rows: crew.map((c, i) => { const w = crewWho(c, staff); return { n: i + 1, name: w.name, des: c.designation, kind: w.ext ? 'External' : (w.title || 'Staff'),
+          from: fd(c.from_date || j.start_date), to: fd(c.to_date || j.expected_return) }; }) }] : [])],
       signatures: [sigFromEvent('Requester (received)', rcEv.find(e => e.step === 'received'), { name: j.requester_name || '', title: S.people[j.requester_id]?.job_title || '' }),
         ...secs.filter(s => s.state === 'issued').map(s => sigFromEvent(`Issued by (${lineShort(s.department_id)})`, secEv.find(e => e.doc_id === s.id && e.step === 'issued'), { name: s.decided_by_name || '', title: S.people[s.decided_by]?.job_title || '', date: s.decided_at ? fd(s.decided_at) : '' })),
         { label: 'Driver' }, { label: 'Client representative' }],

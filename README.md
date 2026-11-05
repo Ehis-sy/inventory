@@ -9,7 +9,24 @@
 - **Emails:** sent by Brevo from **nest-alerts@gankcoenergy.com** as "GANKCO Nest". Sign-in emails use Supabase's custom SMTP (templates in Supabase → Authentication → Emails → Templates). Alert emails use the Brevo API key saved in Supabase Vault as `brevo_api_key`, on a schedule (pg_cron).
 - **DNS (company IT):** `nest` CNAME → `gankco-energy.github.io`, plus the Brevo verification records.
 
-## Install 3.0.2 (about 3 minutes)
+## Install 3.0.3 (about 3 minutes)
+
+1. **Supabase → SQL Editor → New query:** paste all of **`19-nest-v3.0.3-upgrade.sql`** and press **Run**. It should end with **Nest 3.0.3 installed**. Safe to run again.
+2. **GitHub:** unzip **`gankco-nest-v3.0.3.zip`** and upload everything into **github.com/gankco-energy/gankco-nest**, then commit. Keep the `CNAME` file.
+3. Reload Nest (**Ctrl + Shift + R**). The bottom of each page shows **v3.0.3**.
+4. **PeopleCore → PeopleCore settings → Leave types:** check the days per grade against the HR handbook. **Public holidays:** add the 2027 dates once the government announces them.
+
+### What's new in 3.0.3
+- **Crew on materials requests (Inventory):** the team lead adds everyone going out on the job, each with their designation for that job (required). People from outside the company can be typed in. Mark the job onshore, offshore or swamp. The crew prints on the Load-out Manifest as *Crew (POB)*. Line admins can edit it too.
+- **Leave (PeopleCore):** apply for leave with the working days counted for you (no weekends or public holidays), a relief officer who accepts first, then line manager → head of department → HR. Balances per leave type, prorated for new joiners. Leave history, relief requests, a leave plan, and the leave allowance record. Managers see clashes in the team and whether the person is on a job crew before approving.
+- **HR tools:** *Time & pay* (company leave calendar, everyone's balances with adjustments such as opening balances from SeamlessHR, leave allowance marked paid). Leave types with days per grade and public holidays in PeopleCore settings.
+- **Announcements and policies:** only HR posts. Each announcement goes by bell and email, can be pinned, scheduled, or sent to some units or locations only, and can ask staff to read and confirm. A policies library with versions and a who-has-read report.
+- **Discover page:** greeting and quick actions, *Needs you*, at-a-glance numbers, announcements, birthdays (day and month only), work anniversaries and new joiners, who's out (leave or on a job), upcoming holidays.
+- **Anonymous mood check-in:** once a day. HR only sees trends, and nothing is shown for a group with fewer than 5 answers.
+- **Collapsible settings:** Nest settings, Inventory settings and PeopleCore settings show each section as a bar with a short summary. Opening one closes the others; it stays open after you save. Nest asks before closing a section with unsaved changes.
+- **View as fixed:** apps now follow the role you're viewing as, so viewing as staff shows PeopleCore as *Coming soon*, as staff really see it. The *Service lines* link on the Locations and PO settings pages opens the right section again (it used to land on the Inventory home page).
+
+## Install 3.0.2 (already done, for reference)
 
 1. **Supabase → SQL Editor → New query:** paste all of **`18-nest-v3.0.2-upgrade.sql`** and press **Run**. It should end with **Nest 3.0.2 installed**. Safe to run again.
 2. **GitHub:** unzip **`gankco-nest-v3.0.2.zip`** and upload everything into **github.com/gankco-energy/gankco-nest**, then commit. Keep the `CNAME` file.

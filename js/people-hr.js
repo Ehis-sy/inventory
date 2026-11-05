@@ -302,17 +302,33 @@ function hrPreviewOrg(rows) {
 }
 
 // ================================================================ SETTINGS (HR admins)
-const HR_TABS = [['org', 'Organisation'], ['lists', 'Lists'], ['fields', 'Custom fields'], ['flows', 'Approvals'], ['empno', 'Employee numbers'], ['roles', 'HR team'], ['log', 'Activity log']];
+const HR_TABS = [['org', 'Organisation'], ['lists', 'Lists'], ['fields', 'Custom fields'], ['leave', 'Leave types'], ['holidays', 'Public holidays'], ['flows', 'Approvals'], ['empno', 'Employee numbers'], ['roles', 'HR team'], ['log', 'Activity log']];
+const HR_TAB_DESC = { org: () => `${plural(S.hr.units.length, 'unit')} · ${plural(S.hr.positions.length, 'position')} · who reports to whom`, lists: () => 'Grades, work locations and employment types',
+  fields: () => 'Extra details HR keeps on each record', leave: () => 'Leave types and days per grade', holidays: () => 'Not counted as leave days', flows: () => 'Who approves each kind of request, in order',
+  empno: () => 'How new employee numbers are made', roles: () => `${plural((S.hr.roles || []).length, 'person', 'people')} besides the Super Admin`, log: () => 'Every change made in PeopleCore' };
+// 3.0.3: one bar per section; opening one closes the others
 const hrSettingsPage = {
   async load(parts, params) {
-    const tab = this.tab = params.get('tab') || 'org';
-    const panel = await ({ org: hrSetOrg, lists: hrSetLists, fields: hrSetFields, flows: hrSetFlows, empno: hrSetEmpno, roles: hrSetRoles, log: () => hrSetLog(params) }[tab] || hrSetOrg)();
-    return topbar('PeopleCore settings', 'The company structure, lists, fields and approval chains. Everything here can be changed at any time.') +
-      `<div class="tabs" id="htabs">${HR_TABS.map(([k, l]) => `<button data-t="${k}" class="${tab === k ? 'on' : ''}">${l}</button>`).join('')}</div>${panel}`;
+    const tab = this.tab = HR_TABS.some(([k]) => k === params.get('tab')) ? params.get('tab') : null;
+    const panel = tab ? await ({ org: hrSetOrg, lists: hrSetLists, fields: hrSetFields, leave: hrSetLeave, holidays: hrSetHolidays, flows: hrSetFlows, empno: hrSetEmpno, roles: hrSetRoles, log: () => hrSetLog(params) }[tab])() : '';
+    return topbar('PeopleCore settings', 'The company structure, lists, fields and approval chains. Open a section to change it. Everything here can be changed at any time.') +
+      `<div class="hacc">${HR_TABS.map(([k, l]) => `<section class="panel acc ${tab === k ? 'open' : ''}" data-t="${k}" id="hs-${k}"><header tabindex="0" role="button" aria-expanded="${tab === k}"><h2>${l}</h2><span class="meta">${esc(HR_TAB_DESC[k]())}</span><span class="acc-chev" aria-hidden="true"></span></header>
+        ${tab === k ? `<div class="acc-in">${panel}</div>` : ''}</section>`).join('')}</div>`;
   },
   bind(main, parts, params) {
-    $$('#htabs button', main).forEach(b => b.onclick = () => go('#/people/settings?tab=' + b.dataset.t));
-    const B = { org: hrBindOrg, lists: hrBindLists, fields: hrBindFields, flows: hrBindFlows, empno: hrBindEmpno, roles: hrBindRoles, log: hrBindLog }[this.tab];
+    const open = $('.hacc .acc.open', main);
+    if (open) { const l = $(':scope > header h2', open).textContent.trim(); $$('.acc-in section.panel > header > h2', open).forEach(h => { if (h.textContent.trim() !== l && !(h.textContent.trim() === 'Approval chains' && l === 'Approvals')) return; const m = h.parentElement.querySelector('.meta'); if (m && /^\d+$/.test(m.textContent.trim())) m.textContent = `${m.textContent.trim()} ${l.toLowerCase()}`; h.remove(); });
+      const mark = e => { const t = e.target; if (t.type === 'file' || !t.form || !t.form.querySelector('[type=submit]')) return; open.dataset.dirty = '1'; };
+      $('.acc-in', open).addEventListener('input', mark); $('.acc-in', open).addEventListener('change', mark);
+      $('.acc-in', open).addEventListener('submit', () => { open.dataset.dirty = ''; }, true);
+      if (!this.seen) setTimeout(() => open.scrollIntoView({ block: 'start' }), 30); }
+    this.seen = true;
+    $$('.hacc .acc > header', main).forEach(h => { const k = h.parentElement.dataset.t;
+      const act = () => { if (open?.dataset.dirty === '1' && !confirm(`You have unsaved changes in ${$(':scope > header h2', open).textContent.trim()}. Close it and lose them?`)) return;
+        this.seen = false; go(this.tab === k ? '#/people/settings' : '#/people/settings?tab=' + k); };
+      h.onclick = e => { if (e.target.closest('button, a, input, select, textarea, label')) return; act(); };
+      h.onkeydown = e => { if ((e.key === 'Enter' || e.key === ' ') && e.target === h) { e.preventDefault(); act(); } }; });
+    const B = { org: hrBindOrg, lists: hrBindLists, fields: hrBindFields, leave: hrBindLeave, holidays: hrBindHolidays, flows: hrBindFlows, empno: hrBindEmpno, roles: hrBindRoles, log: hrBindLog }[this.tab];
     B && B(main, params);
   }
 };
@@ -413,7 +429,7 @@ function hrBindFields(main) {
 }
 
 // ---- approval chains
-const HR_FLOW_INFO = { profile_change: 'When someone asks to change their own details. Changes to bank, tax and pension details always go to HR admins only.', leave: 'Leave requests (the leave screens arrive in the next update).' };
+const HR_FLOW_INFO = { profile_change: 'When someone asks to change their own details. Changes to bank, tax and pension details always go to HR admins only.', leave: 'Leave requests. When the person names a relief officer, the relief officer accepts first, then these steps.' };
 function hrStepText(s) {
   const who = s.who === 'position' ? (hrPos(s.position_id)?.title || 'Position') : s.who === 'person' ? (hrNameOf(s.employee_id) || 'Named person') : HR_WHO[s.who];
   return (s.label && s.label !== who ? `${s.label} (${who})` : who) + (s.if?.field ? ` · only if ${s.if.field} ${s.if.op} ${s.if.value}` : '');
