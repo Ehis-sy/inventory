@@ -615,7 +615,7 @@ function describeSubmit(res) {
 function confirmUpload(kind, ok, errs, head, cells, apply, needsReason, warn) {
   return modal({
     onOpen: (d, close) => { const b = warn && $('[data-usecur]', d); if (b) b.onclick = () => { close(null); setTimeout(warn.use, 50); }; },
-    title: `Check: ${TEMPLATE_INFO[kind].title}`, wide: true, submit: ok.length ? (needsReason && !isAdmin() ? 'Send for approval' : 'Apply changes') : null,
+    title: `Check: ${TEMPLATE_INFO[kind].title}`, wide: true, submit: ok.length ? (needsReason && !ok.every(o => canApprove(o.item ? o.item.department_id : o.row ? o.row.department_id : 0)) ? 'Send for approval' : 'Apply changes') : null,
     sub: `${plural(ok.length, 'change')} ready${errs.length ? `, ${plural(errs.length, 'row')} skipped` : ''}.`,
     body: `${warn ? warn.html : ''}${errs.length ? `<div class="notice bad"><b>Skipped rows</b><ul class="errlist">${errs.slice(0, 30).map(e => `<li>${esc(e)}</li>`).join('')}${errs.length > 30 ? `<li>…and ${errs.length - 30} more</li>` : ''}</ul></div>` : ''}
       ${ok.length ? `<div class="tablewrap" style="max-height:46vh"><table class="t"><thead><tr>${head.map(h => `<th>${esc(h)}</th>`).join('')}</tr></thead>
@@ -726,7 +726,7 @@ function previewItemsUpload(rows, byId) {
       if (ch.kind && +it.qty_out > 0) return errs.push(`${label}: it’s out on a job, so its type can’t change until it’s back`);
       const nmn = 'min_qty' in ch ? ch.min_qty : it.min_qty, nmx = 'max_qty' in ch ? ch.max_qty : it.max_qty;
       if (nmn != null && nmx != null && +nmx < +nmn) return errs.push(`${label}: restock up to (max) must be at least the reorder level`);
-      const route = canAdmin(it.department_id) ? 'apply' : (role() === 'staff' && inLine(it.department_id)) ? 'approval' : null;
+      const route = canAdmin(it.department_id) ? 'apply' : (invRole() === 'staff' && inLine(it.department_id)) ? 'approval' : null;
       if (!route) return errs.push(`${label}: only ${lineName(it.department_id)} admins can change this item`);
       const toTeam = ch.sub_line_id && svcById(ch.sub_line_id)?.department_id;
       ok.push({ row: { id: it.id, ...ch }, label: `${it.code ? it.code + ' ' : ''}${it.name}`, changes: was, route, team: lineName(it.department_id), moveTo: toTeam && toTeam !== it.department_id ? lineName(toTeam) : '' });
@@ -738,7 +738,7 @@ function previewItemsUpload(rows, byId) {
       const dept = sub.department_id || mineSingle;
       if (!dept) return errs.push(`${label}: ${sub.name} has no team yet. Set one in Nest settings → Service lines first.`);
       const stock = []; for (const l of real) { const v = numOf(r[`Opening qty: ${l.name}`]); if (v === null || v === 0) continue; if (isNaN(v) || v < 0) return errs.push(`${label}: opening qty for ${l.name} must be a number, 0 or more`); stock.push({ location_id: l.id, qty: v }); }
-      const route = canAdmin(dept) ? 'apply' : (role() === 'staff' && inLine(dept)) ? 'approval' : null;
+      const route = canAdmin(dept) ? 'apply' : (invRole() === 'staff' && inLine(dept)) ? 'approval' : null;
       if (!route) return errs.push(`${label}: only ${lineName(dept)} admins can add items there`);
       ok.push({ row: { code: s(r[IT_COLS.code]) || null, name: s(r[IT_COLS.name]), sub_line_id: sub.id, kind: k, subtype_id: st ? st.id : null, unit: s(r[IT_COLS.unit]) || 'pcs',
         min_qty: mn, max_qty: mx, supplier: s(r[IT_COLS.supplier]) || null, notes: s(r[IT_COLS.notes]) || null, stock },

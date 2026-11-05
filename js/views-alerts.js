@@ -61,13 +61,13 @@ function renderMaintScreen(w, scope) {
     <div class="maint-foot">${esc(CFG.COMPANY || '')} · ${esc(CFG.MOTTO || '')}</div></div>`;
   $('#m-out').onclick = e => { e.preventDefault(); sb.auth.signOut(); };
 }
-// Banners: heads-up before maintenance, and the "maintenance is on" bar for the Super Admin and testers
+// Banners: heads-up before maintenance, and the "maintenance is on" bar for the Developer and testers
 function maintBars(scope, inApp) {
   let h = '';
   const on = maintExempt() ? (scope === 'launcher' ? S.maint.wins.filter(mStarted) : [maintWin(scope)].filter(Boolean)) : [];
   on.forEach(w => {
     const names = mTesters().map(id => personName(id)).filter(Boolean);
-    h += `<div class="mbanner on${inApp ? ' inapp' : ''}"><span class="mb-ico">${I_WRENCH}</span><span><b>${w.scope === 'all' ? 'Maintenance mode is on' : `${esc(MAINT_APPS[w.scope])} is under maintenance`}</b> · only ${realSuper() ? 'you' : 'the Super Admin'}${names.length ? ` and testers (${esc(names.join(', '))})` : ''} can use ${w.scope === 'all' ? 'Nest' : 'it'}. Everyone else sees the maintenance screen${mBack(w) && mBack(w) !== 'late' ? ` until ${esc(mBack(w))}` : ''}.</span>
+    h += `<div class="mbanner on${inApp ? ' inapp' : ''}"><span class="mb-ico">${I_WRENCH}</span><span><b>${w.scope === 'all' ? 'Maintenance mode is on' : `${esc(MAINT_APPS[w.scope])} is under maintenance`}</b> · only ${realSuper() ? 'you' : 'the Developer'}${names.length ? ` and testers (${esc(names.join(', '))})` : ''} can use ${w.scope === 'all' ? 'Nest' : 'it'}. Everyone else sees the maintenance screen${mBack(w) && mBack(w) !== 'late' ? ` until ${esc(mBack(w))}` : ''}.</span>
       ${realSuper() ? `<button class="btn small" data-mend="${w.id}">Turn off maintenance</button>` : ''}</div>`;
   });
   mNoticeWins(scope).filter(w => !mDismissed(w.id)).forEach(w => {
@@ -80,7 +80,10 @@ function bindMaintBars(root) {
   $$('[data-mx]', root).forEach(b => b.onclick = () => { mDismiss(+b.dataset.mx); b.closest('.mbanner').remove(); });
   $$('[data-mend]', root).forEach(b => b.onclick = async () => {
     b.disabled = true;
-    try { await q(sb.rpc('end_maintenance', { p_id: +b.dataset.mend })); await loadMaint(); S.maint.sig = maintSig(); toast('Maintenance is off. Everyone can use Nest again.'); render({ quiet: true }); }
+    const w0 = S.maint.wins.find(w => w.id === +b.dataset.mend); const was = w0 && mStarted(w0);
+    try { await q(sb.rpc('end_maintenance', { p_id: +b.dataset.mend })); await loadMaint(); S.maint.sig = maintSig();
+      const left = S.maint.wins.filter(mStarted).length;
+      toast(!was ? 'Scheduled maintenance cancelled' : left ? `${MAINT_APPS[w0.scope]} is back. ${plural(left, 'lock')} still on.` : 'Maintenance is off. Everyone can use Nest again.'); render({ quiet: true }); }
     catch (e) { toast(niceError(e), true); b.disabled = false; }
   });
 }
@@ -106,7 +109,7 @@ function maintTick() {
 setInterval(() => { if (S.session && isActive()) { maintTick(); } }, 30000);
 setInterval(() => { if (S.session && isActive()) onMaintChange(); }, 120000);
 
-// ================================================================ MAINTENANCE: Settings panel (Super Admin)
+// ================================================================ MAINTENANCE: Settings panel (Developer)
 function maintPanel() {
   const wins = S.maint.wins;
   const testers = mTesters().map(id => personName(id)).filter(Boolean);
@@ -144,7 +147,8 @@ function scheduleMaint() {
     title: 'Schedule maintenance', submit: 'Schedule', wide: true,
     sub: 'Everyone affected sees your message and the back-by time. You can extend it or end it early.',
     body: `<div class="pjf-sec">What to lock</div>
-      <div class="mscope">${Object.entries(MAINT_APPS).map(([k, l], i) => `<label class="mopt"><input type="radio" name="scope" value="${k}" ${i === 0 ? 'checked' : ''}><span><b>${esc(l)}</b><span class="sub">${esc(MAINT_DESC[k])}</span></span></label>`).join('')}</div>
+      <p class="sub">Lock all of Nest, or tick one or more apps to lock together. The rest of Nest keeps working.</p>
+      <div class="mscope">${Object.entries(MAINT_APPS).map(([k, l], i) => `<label class="mopt"><input type="checkbox" name="sc_${k}" data-sc="${k}" ${i === 0 ? 'checked' : ''}><span><b>${esc(l)}</b><span class="sub">${esc(MAINT_DESC[k])}</span></span></label>`).join('')}</div>
       <div class="pjf-sec">When</div>
       <div class="segi" id="m-when"><label><input type="radio" name="when" value="now" checked><span>Start now</span></label><label><input type="radio" name="when" value="later"><span>Schedule for later</span></label></div>
       <div class="row3 mt">
@@ -157,21 +161,26 @@ function scheduleMaint() {
       const setBack = () => { const now = f.when.value === 'later' ? new Date(f.starts.value) : new Date(); back.value = local(new Date(now.getTime() + 30 * 6e4)); };
       $$('[name=when]', d).forEach(r => r.onchange = () => { $$('.m-later', d).forEach(x => x.hidden = f.when.value !== 'later'); setBack(); });
       $('[name=starts]', d).onchange = setBack; setBack();
+      // All of Nest and single apps don't mix
+      $$('[data-sc]', d).forEach(c => c.addEventListener('change', () => { if (!c.checked) return; if (c.dataset.sc === 'all') $$('[data-sc]:not([data-sc=all])', d).forEach(x => x.checked = false); else $('[data-sc=all]', d).checked = false; }));
     },
     onSubmit: async x => {
       const starts = x.when === 'later' ? new Date(x.starts) : new Date();
       if (x.when === 'later' && !(starts > new Date())) throw new Error('Choose a start time in the future, or pick Start now.');
       if (!x.back) throw new Error('Choose the back-by time.');
       const back = new Date(x.back); if (!(back > starts)) throw new Error('The back-by time must be after the start.');
-      await q(sb.rpc('schedule_maintenance', { p_scope: x.scope, p_message: x.message || '', p_starts_at: starts.toISOString(), p_back_by: back.toISOString(), p_notice_minutes: x.when === 'later' ? +x.notice : 0 }));
+      const scopes = Object.keys(MAINT_APPS).filter(k => x['sc_' + k]);
+      if (!scopes.length) throw new Error('Tick what to lock: all of Nest, or one or more apps.');
+      await q(sb.rpc('schedule_maintenance_apps', { p_scopes: scopes, p_message: x.message || '', p_starts_at: starts.toISOString(), p_back_by: back.toISOString(), p_notice_minutes: x.when === 'later' ? +x.notice : 0 }));
       await loadMaint(); S.maint.sig = maintSig();
-      toast(x.when === 'later' ? `Maintenance scheduled for ${mWhen(starts)}` : `${MAINT_APPS[x.scope]} is now under maintenance`); render({ quiet: true });
+      const names = scopes.map(k => MAINT_APPS[k]).join(', ').replace(/, ([^,]*)$/, ' and $1');
+      toast(x.when === 'later' ? `Maintenance scheduled for ${mWhen(starts)}` : `${names} ${scopes.length > 1 ? 'are' : 'is'} now under maintenance`); render({ quiet: true });
     }
   });
 }
 function chooseTesters() {
   const cur = new Set(mTesters());
-  const ppl = Object.values(S.people).filter(p => ['admin', 'staff'].includes(p.role)).sort((a, b) => (a.full_name || a.email).localeCompare(b.full_name || b.email));
+  const ppl = Object.values(S.people).filter(p => p.role === 'staff').sort((a, b) => (a.full_name || a.email).localeCompare(b.full_name || b.email));
   return modal({
     title: 'Testers', submit: 'Save testers',
     sub: 'Testers can use Nest during maintenance, to help check an update before everyone comes back.',
@@ -183,7 +192,7 @@ function chooseTesters() {
   });
 }
 
-// ================================================================ ALERT EMAILS: Settings panel (Super Admin)
+// ================================================================ ALERT EMAILS: Settings panel (Developer)
 async function alertsPanel() {
   const a = setting('alerts', {}) || {};
   let st = null; try { st = await q(sb.rpc('alert_status')); } catch (e) { st = null; }
@@ -195,7 +204,7 @@ async function alertsPanel() {
   const res = r => r.error ? `<span class="neg">${esc(r.error)}</span>` : r.status_code == null ? '<span class="sub">Sending…</span>' : r.status_code < 300 ? '<span class="pos">Accepted by Brevo</span>' : `<span class="neg">Brevo said ${r.status_code}</span>${why(r)}`;
   const ppl = Object.values(S.people).filter(p => !['pending', 'disabled'].includes(p.role)).sort((x, y) => (x.full_name || x.email).localeCompare(y.full_name || y.email));
   return `<section class="panel" id="alerts"><header><h2>Alert emails</h2>${!a.enabled ? chip('muted', 'Paused') : a.test_mode ? chip('pending', 'Test mode') : chip('ok', 'On for everyone')}</header><div class="body">
-    <p class="muted">A morning email at <b>7:30 am, Monday to Friday</b> with each person’s own to-dos, and a <b>Monday</b> email with low stock and faulty items (Management get a weekly summary). Sent from nest-alerts@gankcoenergy.com. Nobody gets an empty email.</p>
+    <p class="muted">A morning email at <b>7:30 am, Monday to Friday</b> with each person’s own to-dos, and a <b>Monday</b> email with low stock and faulty items (Inventory Viewers get a weekly summary). Sent from nest-alerts@gankcoenergy.com. Nobody gets an empty email.</p>
     <div class="astatus">
       <div class="${st?.key ? 'ok' : 'bad'}"><b>${st?.key ? '✔' : '✖'} Brevo API key</b><span>${st?.key ? 'Found in Supabase Vault' : 'Missing: add it in Supabase (see the 2.6 setup guide)'}</span></div>
       <div class="${st?.schedule ? 'ok' : 'bad'}"><b>${st?.schedule ? '✔' : '✖'} Schedule</b><span>${st?.schedule ? '7:30 am Mon–Fri · Monday 7:35 am' : 'Not set up: run the 2.6 SQL file again after switching on pg_cron'}</span></div>
@@ -203,7 +212,7 @@ async function alertsPanel() {
       <div><b>Last Monday run</b><span>${s.last_weekly_on ? `${fd(s.last_weekly_on)} · ${plural(+s.last_weekly_sent || 0, 'email')}` : 'Not yet'}</span></div></div>
     <form id="af" class="aform">
       <label class="switch"><input type="checkbox" name="enabled" ${a.enabled !== false ? 'checked' : ''}><span class="sw"></span><span><b>Send alert emails</b><span class="sub">Turn off to pause every alert email.</span></span></label>
-      <label class="switch"><input type="checkbox" name="test_mode" ${a.test_mode !== false ? 'checked' : ''}><span class="sw"></span><span><b>Test mode</b><span class="sub">Only Super Admins receive the scheduled emails. Turn off when you’re happy, to send them to everyone.</span></span></label>
+      <label class="switch"><input type="checkbox" name="test_mode" ${a.test_mode !== false ? 'checked' : ''}><span class="sw"></span><span><b>Test mode</b><span class="sub">Only Developers receive the scheduled emails. Turn off when you’re happy, to send them to everyone.</span></span></label>
       <div><button class="btn primary" type="submit">Save</button></div></form>
     <div class="atry"><div class="pjf-sec">Try it</div>
       <div class="row3"><label class="f">Email for<select id="a-as">${ppl.map(p => opt(p.id, `${p.full_name || p.email} · ${ROLE_LABEL[p.role]}`, S.profile.id)).join('')}</select></label>
@@ -218,7 +227,7 @@ function bindAlertsPanel(main) {
   const f = $('#af', main); if (!f) return;
   f.onsubmit = async e => {
     e.preventDefault();
-    try { await q(sb.rpc('save_alert_settings', { p_enabled: f.enabled.checked, p_test_mode: f.test_mode.checked })); await loadLookups(); toast(!f.enabled.checked ? 'Alert emails paused' : f.test_mode.checked ? 'Saved: test mode, only Super Admins get them' : 'Saved: alert emails go to everyone'); render({ quiet: true }); }
+    try { await q(sb.rpc('save_alert_settings', { p_enabled: f.enabled.checked, p_test_mode: f.test_mode.checked })); await loadLookups(); toast(!f.enabled.checked ? 'Alert emails paused' : f.test_mode.checked ? 'Saved: test mode, only Developers get them' : 'Saved: alert emails go to everyone'); render({ quiet: true }); }
     catch (ex) { toast(niceError(ex), true); }
   };
   const as = () => $('#a-as', main).value, kind = () => $('#a-kind', main).value;
@@ -252,5 +261,31 @@ function bindMyAlerts(main) {
   c.onchange = async () => {
     try { await q(sb.rpc('set_email_alerts', { p_on: c.checked })); S.profile.email_alerts = c.checked; toast(c.checked ? 'Alert emails on' : 'Alert emails off'); render({ quiet: true }); }
     catch (e) { c.checked = !c.checked; toast(niceError(e), true); }
+  };
+}
+
+// ================================================================ 3.0.4 PEOPLECORE: under construction (Settings panel, Developer)
+function peopleBuildPanel() {
+  const c = setting('people_construction', null) || { on: true, testers: [] };
+  const testers = (c.testers || []).map(id => personName(id)).filter(Boolean);
+  return `<section class="panel" id="peoplebuild"><header><h2>PeopleCore</h2>${c.on ? chip('pending', 'Under construction') : chip('ok', 'Open')}</header><div class="body">
+    <p class="muted">${c.on ? 'PeopleCore shows as <b>under construction</b>. Only you and the testers you tick can open it; everyone else sees an under-construction screen.' : 'PeopleCore is open to everyone you’ve given the app to.'}</p>
+    <div class="mtesters"><div><b>Testers</b><div class="sub">${testers.length ? esc(testers.join(', ')) : 'No testers yet. Only you can open PeopleCore.'}</div></div>
+      <button class="btn small" type="button" id="pb-test">${ico('users')}Choose testers</button></div>
+    <div class="actionrow mt"><button class="btn small ${c.on ? 'primary' : ''}" type="button" id="pb-toggle">${c.on ? 'Open PeopleCore to everyone' : 'Put back under construction'}</button></div></div></section>`;
+}
+function bindPeopleBuild(main) {
+  const c = setting('people_construction', null) || { on: true, testers: [] };
+  const save = async (on, ids) => { await q(sb.rpc('set_people_construction', { p_on: on, p_testers: ids })); await loadLookups(); };
+  const t = $('#pb-toggle', main); if (t) t.onclick = async () => {
+    if (c.on && !confirm('Open PeopleCore to everyone who has the app?')) return;
+    try { await save(!c.on, c.testers || []); toast(c.on ? 'PeopleCore is open' : 'PeopleCore is under construction again'); render({ quiet: true }); } catch (e) { toast(niceError(e), true); }
+  };
+  const b = $('#pb-test', main); if (b) b.onclick = () => {
+    const cur = new Set(c.testers || []);
+    const ppl = Object.values(S.people).filter(p => p.role === 'staff').sort((x, y) => (x.full_name || x.email).localeCompare(y.full_name || y.email));
+    return modal({ title: 'PeopleCore testers', submit: 'Save testers', sub: 'Testers can open PeopleCore while it’s under construction. They also need the PeopleCore app switched on (Team & access).',
+      body: ppl.length ? `<div class="checklist">${ppl.map(p => `<label class="checkrow"><input type="checkbox" name="t_${p.id}" ${cur.has(p.id) ? 'checked' : ''}><span><b>${esc(p.full_name || p.email)}</b><span class="sub">${esc(p.job_title || p.email)}${(p.apps || []).includes('people') ? '' : ' · PeopleCore app off'}</span></span></label>`).join('')}</div>` : '<p class="muted">No staff yet.</p>',
+      onSubmit: async x => { const ids = Object.keys(x).filter(k => k.startsWith('t_') && x[k]).map(k => k.slice(2)); await save(c.on, ids); toast(ids.length ? `${plural(ids.length, 'tester')} saved` : 'No testers'); render({ quiet: true }); } });
   };
 }

@@ -1,7 +1,7 @@
-/* GANKCO Nest — signatures, job titles and report sign-off (preparer → line admin → Super Admin) */
+/* GANKCO Nest — signatures, job titles and report sign-off (preparer → line admin → Developer) */
 'use strict';
 
-const SO_STATUS = { review: ['pending', 'Waiting for line admin'], approval: ['soon', 'Waiting for Super Admin'], final: ['ok', 'Final'], returned: ['rejected', 'Returned'], cancelled: ['muted', 'Withdrawn'] };
+const SO_STATUS = { review: ['pending', 'Waiting for line admin'], approval: ['soon', 'Waiting for Developer'], final: ['ok', 'Final'], returned: ['rejected', 'Returned'], cancelled: ['muted', 'Withdrawn'] };
 const SO_KIND = { monthly: 'Monthly', quarterly: 'Quarterly', annual: 'Annual' };
 
 // ---------------------------------------------------------------- signature image
@@ -99,13 +99,13 @@ function editJobTitle(p) {
       toast('Job title saved'); render({ quiet: true });
     } });
 }
-const canEditTitle = p => isSuper() || (role() === 'admin' && ['pending', 'staff', 'disabled'].includes(p.role));
+const canEditTitle = p => isSuper();
 
 // ---------------------------------------------------------------- report sign-off
 const soLine = r => r.department_id ? lineShort(r.department_id) : 'All lines';
 function soNext(r) {
   if (r.status === 'review') return `${soLine(r)} admin to review and sign`;
-  if (r.status === 'approval') return 'Super Admin to sign';
+  if (r.status === 'approval') return 'Developer to sign';
   if (r.status === 'returned') return `${r.prepared_name} to update and sign again`;
   return '';
 }
@@ -135,9 +135,10 @@ async function signAndSubmitReport(spec) {
       body: '<p class="muted">Each report period and service line is signed off once. Open the existing one to see where it is.</p>', onSubmit: async () => go('#/signoff/' + prev.id) });
   }
   const img = await mySigImage();
-  const reviewers = dept ? Object.values(S.people).filter(p => p.role === 'admin' && p.id !== S.profile.id && S.members.some(m => m.profile_id === p.id && m.department_id === dept)) : [];
-  const next = dept && reviewers.length ? `a ${esc(lineShort(dept))} admin signs as reviewer, then the Super Admin gives the final signature`
-    : 'the Super Admin gives the final signature';
+  // 3.0.4: the line's main or backup admin reviews
+  const reviewers = dept ? Object.values(S.people).filter(p => p.role !== 'superadmin' && p.id !== S.profile.id && isApproverOf(p.id, dept)) : [];
+  const next = dept && reviewers.length ? `a ${esc(lineShort(dept))} admin signs as reviewer, then the Developer gives the final signature`
+    : 'the Developer gives the final signature';
   return modal({
     title: prev ? `Sign & resubmit ${prev.ref}` : 'Sign & submit for sign-off', submit: prev ? 'Sign & resubmit' : 'Sign & submit',
     sub: `${esc(spec.title)} · ${esc(spec.subtitle)}`,
@@ -161,7 +162,7 @@ ROUTES.signoffs = {
       returned: r => r.status === 'returned', final: r => r.status === 'final', all: r => true };
     const list = rows.filter(V[this.view] || V.all).filter(r => !S.line || r.department_id === +S.line || r.department_id == null);
     const nWait = rows.filter(V.waiting).length;
-    return topbar('Sign-offs', 'Reports signed by the preparer, the line admin and the Super Admin. Start one from Reports with “Sign & submit”.', `<a class="btn tagbtn" href="#/reports">${ico('chart')}Go to Reports</a>`) + lineChips() +
+    return topbar('Sign-offs', 'Reports signed by the preparer, the line admin and the Developer. Start one from Reports with “Sign & submit”.', `<a class="btn tagbtn" href="#/reports">${ico('chart')}Go to Reports</a>`) + lineChips() +
       `<div class="filters"><div class="seg" id="seg">${[['waiting', `Waiting for me${nWait ? ' (' + nWait + ')' : ''}`], ['mine', 'Prepared by me'], ['progress', 'In progress'], ['returned', 'Returned'], ['final', 'Final'], ['all', 'All']].map(([k, l]) => `<button data-v="${k}" class="${this.view === k ? 'on' : ''}">${l}</button>`).join('')}</div></div>
       <section class="panel"><div class="tablewrap"><table class="t stack"><thead><tr><th>Ref</th><th>Report</th><th>Service line</th><th>Status</th><th>Prepared by</th><th>Updated</th></tr></thead><tbody>
       ${list.length ? list.map(r => `<tr class="click" data-id="${r.id}"><td>${tag(r.ref)}</td><td class="full"><div class="name">${esc(r.title)}</div><div class="sub">${esc(r.period_label)}</div></td>
@@ -184,14 +185,14 @@ ROUTES.signoff = {
     const imgs = await sigImages(events.map(e => e.signature_id).filter(Boolean));
     const me = S.viewAs ? null : S.profile.id; const P = r.payload || {};
     const ev = step => events.find(e => e.step === step);
-    const reviewers = r.department_id ? Object.values(S.people).filter(p => p.role === 'admin' && p.id !== r.prepared_by && S.members.some(m => m.profile_id === p.id && m.department_id === r.department_id)) : [];
+    const reviewers = r.department_id ? Object.values(S.people).filter(p => p.role !== 'superadmin' && p.id !== r.prepared_by && isApproverOf(p.id, r.department_id)) : [];
     const supers = Object.values(S.people).filter(p => p.role === 'superadmin');
     const step = (label, e, waiting, active) => `<div class="sostep ${e ? 'done' : active ? 'now' : ''}"><div class="sub upper">${esc(label)}</div>
       ${e ? `${sigBox(imgs[e.signature_id])}<div class="name">${esc(e.user_name)}</div><div class="sub">${esc(e.job_title || '')}</div><div class="sub">Signed ${fdt(e.signed_at)}</div>`
         : `<div class="sigbox empty"></div><div class="sub">${active ? 'Waiting for ' : ''}${esc(waiting)}</div>`}</div>`;
     const steps = [step('Prepared by', ev('prepared'), r.prepared_name, r.status === 'returned')];
     if (r.department_id) steps.push(step('Reviewed by (line admin)', ev('reviewed'), reviewers.length ? reviewers.map(p => p.full_name || p.email).join(' or ') : 'Skipped: no other admin in this line', r.status === 'review'));
-    steps.push(step('Approved by (Super Admin)', ev('approved'), supers.map(p => p.full_name || p.email).join(' or '), r.status === 'approval'));
+    steps.push(step('Approved by (Developer)', ev('approved'), supers.map(p => p.full_name || p.email).join(' or '), r.status === 'approval'));
     const canSign = canSignReport(r);
     const mineBack = r.status === 'returned' && (r.prepared_by === me || isSuper());
     const canWithdraw = !['final', 'cancelled'].includes(r.status) && (r.prepared_by === me || isSuper());
@@ -204,7 +205,7 @@ ROUTES.signoff = {
         <h1>${esc(r.title)}</h1><div class="facts"><span>${esc(r.subtitle || r.period_label)}</span><span>${esc(SO_KIND[r.kind])} report</span><span>${esc(soLine(r))}</span></div>
         <div class="facts sub">Figures frozen ${fdt(r.prepared_at)} by ${esc(r.prepared_name || '')}${r.status !== 'final' && soNext(r) ? ` · Next: ${esc(soNext(r))}` : ''}</div></div></div>
       <div class="actionrow">
-        ${canSign && r.status === 'review' ? `<button class="btn primary" id="sign">${ico('sign')}Sign &amp; send to Super Admin</button><button class="btn" id="ret">Return</button>` : ''}
+        ${canSign && r.status === 'review' ? `<button class="btn primary" id="sign">${ico('sign')}Sign &amp; send to Developer</button><button class="btn" id="ret">Return</button>` : ''}
         ${canSign && r.status === 'approval' ? `<button class="btn primary" id="sign">${ico('sign')}Sign &amp; approve</button><button class="btn" id="ret">Return</button>` : ''}
         ${mineBack ? `<button class="btn primary" id="redo">${ico('chart')}Update figures</button>` : ''}
         <button class="btn" id="pdf">${ico('pdf')}${r.status === 'final' ? 'Signed PDF' : 'Draft PDF'}</button>
@@ -227,8 +228,8 @@ ROUTES.signoff = {
       return modal({ title: final ? `Sign & approve ${r.ref}` : `Sign ${r.ref} as reviewer`, submit: final ? 'Sign & approve' : 'Sign & send',
         sub: `${esc(r.title)} · ${esc(r.subtitle || r.period_label)}`,
         body: `<div class="sigpaper">${img ? `<img src="${img.dataUrl}" alt="">` : ''}<div class="sigline"></div><div class="signame">${esc(S.profile.full_name || S.profile.email)}</div><div class="sub">${esc(S.profile.job_title || 'No job title yet')}</div><div class="sub">${final ? 'Approved by' : 'Reviewed by'}</div></div>
-          <p class="muted mt">${final ? 'This is the final signature. The report becomes final and the signed PDF is available to everyone.' : 'It goes to the Super Admin for the final signature.'} You’re signing the frozen figures shown on this page.</p>`,
-        onSubmit: async () => { await q(sb.rpc(final ? 'approve_report' : 'review_report', { p_id: r.id })); toast(final ? 'Signed off: the report is final' : 'Signed and sent to the Super Admin'); render({ quiet: true }); refreshAlerts(); } });
+          <p class="muted mt">${final ? 'This is the final signature. The report becomes final and the signed PDF is available to everyone.' : 'It goes to the Developer for the final signature.'} You’re signing the frozen figures shown on this page.</p>`,
+        onSubmit: async () => { await q(sb.rpc(final ? 'approve_report' : 'review_report', { p_id: r.id })); toast(final ? 'Signed off: the report is final' : 'Signed and sent to the Developer'); render({ quiet: true }); refreshAlerts(); } });
     };
     if (b('#ret')) b('#ret').onclick = () => modal({ title: `Return ${r.ref}`, submit: 'Return', danger: true,
       sub: `It goes back to ${esc(r.prepared_name || 'the preparer')} with your comment. Any signatures after theirs are cleared, and it starts again when they resubmit.`,

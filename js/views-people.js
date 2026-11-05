@@ -8,7 +8,7 @@ S.hr = { at: 0, units: [], positions: [], lists: [], fields: [], flows: [], role
 const HR_STATUS = { active: ['ok', 'Active'], suspended: ['pending', 'Suspended'], exited: ['muted', 'Left'] };
 const HR_VIS = { everyone: 'Everyone', manager: 'Managers and HR', hr: 'HR only', locked: 'Locked (HR admins)' };
 const HR_WHO = { line_manager: 'Line manager', next_level: 'Next level up (manager’s manager)', hod: 'Head of department', hr: 'HR', position: 'A position (e.g. MD)', person: 'A named person' };
-const HR_REQ = { profile_change: 'Profile change', leave: 'Leave' };
+const HR_REQ = { profile_change: 'Profile change', leave: 'Leave', redeployment: 'Redeployment', contract_update: 'Contract update', contract_extension: 'Contract extension', leave_plan: 'Leave plan', resumption: 'Back from leave', expense: 'Expense', overtime: 'Overtime', service: 'Service request', exit: 'Exit' };
 const HR_LIST_KINDS = { grade: ['Grades', 'Grade'], location: ['Work locations', 'Location'], emp_type: ['Employment types', 'Employment type'] };
 // the locked section (HR admins and the person only)
 const HR_PRIVATE = [['bank_name', 'Bank name'], ['account_no', 'Account number'], ['account_name', 'Account name'], ['tin', 'Tax ID (TIN)'],
@@ -96,7 +96,7 @@ function peopleNav() {
     ['people/pay', 'Pay', 'pay'], ['people/approvals', 'Approvals', 'check'],
     ...(hrHasTeam() ? [['people/team', 'My team', 'users']] : []), ['people/company', 'Company', 'building']];
   const setup = [...(isHR() ? [['people/staff', 'Staff records', 'audit'], ['people/time', 'Time & pay', 'plan'], ['people/engage', 'Engage', 'bell']] : []), ...(isHRAdmin() ? [['people/settings', 'PeopleCore settings', 'gear']] : []),
-    ...(isAdmin() ? [['team', 'Nest admin', 'users']] : [])];
+    ...(isSuper() ? [['team', 'Nest admin', 'users']] : [])];
   return { main, setup, setupLabel: 'HR' };
 }
 function peopleBottomBar() {
@@ -133,7 +133,7 @@ ROUTES.people = {
     peopleReshell(hrNavKey(parts));
     if ((p1 === 'time' || p1 === 'engage') && !isHR()) return topbar('PeopleCore') + '<div class="notice">Only HR can see this.</div>';
     if ((p1 === 'staff' || p1 === 'emp') && !isHR()) return topbar('Staff records') + '<div class="notice">Only HR can see staff records.</div>';
-    if (p1 === 'settings' && !isHRAdmin()) return topbar('PeopleCore settings') + '<div class="notice">Only HR admins can change PeopleCore settings. Ask the Super Admin if you need it.</div>';
+    if (p1 === 'settings' && !isHRAdmin()) return topbar('PeopleCore settings') + '<div class="notice">Only HR admins can change PeopleCore settings. Ask the Developer if you need it.</div>';
     return this.page.load(parts, params);
   },
   bind(main, parts, params) {
@@ -573,7 +573,7 @@ const hrWorkPage = {
           <div class="hr-wbtns"><a class="btn small" href="#/people/me">${ico('user')}My profile</a><a class="btn small" href="#/people/org">View org chart</a></div></div></div></section>
       ${done.pct < 100 ? `<section class="hr-complete"><span class="hr-ring" style="--p:${done.pct}"><b>${done.pct}%</b></span><div><div class="t">Complete your profile</div><div class="sub">Still missing: ${esc(done.missing.slice(0, 4).join(', '))}${done.missing.length > 4 ? ` and ${done.missing.length - 4} more` : ''}. HR checks every change.</div></div>
         <a class="btn small primary" href="#/people/me">Complete it</a></section>` : ''}
-      <section class="hr-qa">${qa('plan', 'Apply for leave', 'leave')}${qa('clock', 'Raise overtime', 'requisition')}${qa('plus', 'New requisition', 'requisition')}${qa('move', 'Request redeployment', 'redeployment')}</section>
+      <section class="hr-qa">${qa('plan', 'Apply for leave', 'leave')}<a href="#/people/work/requisition?tab=new">${ico('clock')}Raise overtime</a><a href="#/people/work/requisition?tab=new">${ico('plus')}New requisition</a>${qa('move', 'Request redeployment', 'redeployment')}<a href="#/people/disciplinary?raise=grievance">${ico('audit')}Raise a grievance</a></section>
       ${this.bal?.length ? `<section class="panel"><header><h2>My leave</h2><span class="meta">${thisYear()} · resets 1 January</span><div class="right"><a class="btn small" href="#/people/work/leave">Leave plan &amp; history</a></div></header>
         <div class="leaves">${this.bal.filter(b => !b.why_not && !b.unlimited).map(b => { const tot = +b.entitled + +b.carried - +b.lapsed + +b.adjusted; return `<div class="lv"><div class="t">${esc(b.name)}</div><div class="n">${+b.left} <small>of ${tot} days left</small></div><div class="bar"><i style="width:${tot ? Math.max(0, Math.min(100, b.left / tot * 100)) : 0}%"></i></div><a href="#/people/work/leave?apply=1">Apply →</a></div>`; }).join('')}</div></section>` : ''}
       <section class="panel"><header><h2>My open requests</h2><span class="meta">${reqs.length}</span><div class="right"><a class="btn small" href="#/people/approvals?tab=mine">All requests</a></div></header>

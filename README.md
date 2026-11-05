@@ -1,4 +1,4 @@
-# GANKCO Nest: version 3.0.2 update (PeopleCore)
+# GANKCO Nest: version 3.0.4 update (roles and access, Developer tools, PeopleCore admin side)
 
 *Built to support engineered solutions.*
 
@@ -9,7 +9,43 @@
 - **Emails:** sent by Brevo from **nest-alerts@gankcoenergy.com** as "GANKCO Nest". Sign-in emails use Supabase's custom SMTP (templates in Supabase → Authentication → Emails → Templates). Alert emails use the Brevo API key saved in Supabase Vault as `brevo_api_key`, on a schedule (pg_cron).
 - **DNS (company IT):** `nest` CNAME → `gankco-energy.github.io`, plus the Brevo verification records.
 
-## Install 3.0.3 (about 3 minutes)
+## Install 3.0.4 (about 5 minutes)
+
+1. **Supabase → SQL Editor:** the upgrade comes in **4 parts** (one file was too big for the SQL Editor). For each of **`20-nest-v3.0.4-upgrade-part1.sql`** to **`part4.sql`**, in order: open a **New query**, paste the whole file, press **Run**. Parts 1–3 end with *Part N of 4 done*; part 4 ends with **Nest 3.0.4 installed**. Each part is all-or-nothing and safe to run again, so if one fails, fix the cause and run that part again before going on. (You don't need to save the queries.)
+2. **GitHub:** unzip **`gankco-nest-v3.0.4.zip`** and upload everything into **github.com/gankco-energy/gankco-nest**, then commit. Keep the `CNAME` file.
+3. Reload Nest (**Ctrl + Shift + R**). The bottom of each page shows **v3.0.4**.
+4. **PeopleCore → System control → Admins:** give HR staff an admin role (HR Admin, HR Officer or Finance, or a role you make under *Roles & permissions*). The 3.0 HR admins and HR officers were moved across automatically.
+5. **PeopleCore → Admin → Company settings → Reporting lines:** check who holds **COO** and **MD/CEO**. Then **HRIS → Employees:** check each person's department, job role, paygrade and supervisor (3.0 positions were converted), or upload the SeamlessHR employee export (**Employees → Upload**).
+6. **Locked details:** enter each person's annual gross salary (employee → *Account details* → Edit). Overtime is worked out from it.
+7. Check the PFA list (*HRIS → Employee settings → PFA list*) against SeamlessHR's, and add 2027's moveable public holidays when announced (*Leave → Leave settings*).
+8. **Nest admin → Team & access** (you are now called the **Developer**):
+   - Old **Admins** became **Inventory · Admin**; **Management** became **Inventory · Viewer** and **Purchase Order · Viewer**. Check each person's apps and roles.
+   - **Who approves for each service line:** pick a **main** and **backup** admin for every line (for example the QHSE manager for QHSE). Only they (and you) approve that line's requests, stock changes and counts. A line with nobody set comes to you.
+   - Optional: set a second person's Access to **Developer** as your backup.
+9. **PeopleCore** stays **under construction** for everyone except you. To let HR test it: **Nest settings → PeopleCore → Choose testers** (they also need the PeopleCore app on). Open it to everyone there when ready.
+
+**If no Developer can sign in** (for example the Developer left without handing over), run this in Supabase → SQL Editor, with the right email: `update public.profiles set role = 'superadmin' where email = 'name@gankcoenergy.com';`
+
+### What's new in 3.0.4
+- **Developer and app roles:** Super Admin is now the **Developer** (one, plus an optional backup; hand over with **Transfer Developer**). Only the Developer approves sign-ups, switches apps on or off and sets roles. Each app has its own roles: Inventory Admin / Staff / Viewer, Purchase Order Staff / Viewer, PFI & Quote Admin / Staff, PeopleCore on or off. An admin in one app gets nothing in another.
+- **Line approvers:** Inventory Admin is one role; each line's main and backup admin approve its materials requests, stock changes, counts and report reviews. Nobody approves their own request. Inventory admins can switch between **My view** and **Admin view**.
+- **Viewers:** see the Overview, stock, Reports and Sign-offs, and add jobs to the Job planner. PO Viewers see and download POs.
+- **Developer tools** (Nest admin): reverse a materials request completely (stock back as before), reset a monthly count (an approved one has its stock change undone; Start count comes back), delete POs (received goods come off stock), planner jobs, sign-offs, unused items/serials/locations/categories, unapproved sign-ups and PeopleCore test records. Each asks you to type the number; the audit log keeps a full copy.
+- **Fixes:** a cancelled request no longer shows *Approve & issue*; a cancelled or rejected request sends its planned job back to *Planned* so a new request can be made.
+- **Maintenance:** tick two or more apps to lock together without locking all of Nest.
+- **PeopleCore under construction** until the Developer opens it (Developer and chosen testers can use it).
+- **Four views:** *My self service* (everyone), *Supervisor* (anyone with people under them), *Admin* (HR, by role) and *System control* (admins and roles). The switcher sits at the top of the menu (top of the page on phones).
+- **System control:** admins and **roles with SeamlessHR's permission list** (324 permissions across the modules). Built-in roles: Super Admin, HR Admin, HR Officer, Finance. Locked staff details keep their own permission.
+- **Company settings (SeamlessHR's structure):** departments and units tree with heads and codes, job roles inside departments, locations, regions, cost centres, job families, pay groups and paygrades (G1–G4 bands, UC1), groups, the six **reporting lines** (each person's can be overridden), company documents in folders, organogram.
+- **HRIS:** overview with charts, employee list with profile completeness, add/edit employee (SeamlessHR's form), the 13 profile sections with a visibility grid and per-section approval, contracts (types, bulk extend, plan upload, requests), redeployment (direct, bulk, staff requests), department work-day schedules (leave counts them), employee groups, employee settings, audit trail.
+- **Approval workflow:** named workflows built from reporting lines, admin roles or a named person; optional and conditional steps; comment rules; daily or weekly reminders; auto re-route to stand-ins; maker-checker. GANKCO's 7 plus Profile update, Redeployment, Contract and Leave plan.
+- **Announcements:** SeamlessHR's form (title, summary, tidy rich content, external link, video links, audience by department, location or group, draft or publish with email/in-app and expiry), plus pin, schedule, read-and-confirm, files and who-has-read.
+- **Leave:** GANKCO's 8 policies with days per paygrade (3-step editor), relief officer approval per policy, start + resumption date with a requirements note and Preview, reserved / additional / blocked days, history and opening balance upload, balances, resumption ("I'm back"), leave allowance (due → paid, staff can ask), recurring public holidays.
+- **Requisition:** Overtime (gross monthly pay ÷ 176 × 1.5 weekdays / 2.0 weekends and public holidays; weekday hours count outside 9–5), Expense and Service policies (with your own form fields), raise on behalf, mark as paid, transactions, SLA (off).
+- **Exit:** GANKCO's 4 policies, 7 modes, 11 reasons; activities (handover, exit interview, survey, **return assets from Inventory**, **clearance** sign-offs); sign-in switched off after the last day; settlement entered by hand; certificate of service (off until HR switches it on).
+- **Disciplinary:** cases (several people each with their own outcome, reviewers, levels I/II, meetings, comments and activity log), grievances, anonymous whistleblowing, queries, sanctions that act (suspension switches off sign-in for its dates; termination opens an exit), appeals, 3 letters, terminologies, case ID format, historic data upload.
+
+## Install 3.0.3 (already done, for reference)
 
 1. **Supabase → SQL Editor → New query:** paste all of **`19-nest-v3.0.3-upgrade.sql`** and press **Run**. It should end with **Nest 3.0.3 installed**. Safe to run again.
 2. **GitHub:** unzip **`gankco-nest-v3.0.3.zip`** and upload everything into **github.com/gankco-energy/gankco-nest**, then commit. Keep the `CNAME` file.

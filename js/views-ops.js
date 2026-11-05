@@ -29,7 +29,7 @@ ROUTES.jobs = {
           : v === 'waiting' ? ['submitted', 'partial'].includes(j.status) : v === 'out' ? ['out', 'partial'].includes(j.status) : j.status === v))
         && (!qq || `${j.job_no} ${j.title} ${j.client || ''} ${j.requester_name || ''} ${j.field || ''}`.toLowerCase().includes(qq)));
       $('#tbl tbody', main).innerHTML = rows.length ? rows.map(j => {
-        const waitMine = (j.job_sections || []).some(s => s.state === 'pending' && canAdmin(s.department_id));
+        const waitMine = ['submitted', 'partial'].includes(j.status) && (isSuper() || (j.requester_id !== S.profile.id && j.created_by !== S.profile.id)) && (j.job_sections || []).some(s => s.state === 'pending' && canApprove(s.department_id));
         return `<tr class="click" data-id="${j.id}">
         <td>${tag(j.job_no)}</td><td class="full"><div class="name">${esc(j.title)}</div>${j.field ? `<div class="sub">${esc(j.field)}</div>` : ''}</td>
         <td>${esc(j.client || '—')}</td><td>${esc(j.requester_name || '—')}</td>
@@ -90,15 +90,17 @@ ROUTES.job = {
     const draft = j.status === 'draft';
     const canReturn = ['out', 'partial'].includes(j.status) && lines.some(l => l.checkouts && !l.checkouts.closed_at);
     const isRequester = !S.viewAs && j.requester_id === S.profile.id;
+    const ownReq = !isSuper() && !S.viewAs && (j.requester_id === S.profile.id || j.created_by === S.profile.id);
     const canConfirm = isRequester && ['out', 'closed'].includes(j.status) && !j.received_at && secs.some(s => s.state === 'issued');
     const tally = (l, type, st) => moves.filter(m => m.checkout_id === l.checkout_id && m.type === type && (!st || m.to_status === st)).reduce((a, m) => a + +m.qty, 0);
     const lineIds = [...new Set(lines.map(l => l.items?.department_id))].sort((a, b) => (S.depts.findIndex(d => d.id === a)) - (S.depts.findIndex(d => d.id === b)));
     const section = d => {
       const sec = secs.find(s => s.department_id === d); const ls = lines.filter(l => l.items?.department_id === d);
-      const st = sec ? sec.state : draft ? null : 'pending';
+      // 3.0.4 fix: a cancelled request (never submitted) has no line approvals, so it isn't "waiting"
+      const st = sec ? sec.state : (draft || j.status === 'cancelled') ? null : 'pending';
       return `<section class="panel mrsec ${st ? 'sec-' + st : ''}"><header><h2>${esc(lineName(d))}</h2>${st ? chip(...SEC_STATUS[st]) : ''}
-        <span class="meta">${sec?.decided_by_name ? `${sec.state === 'issued' ? 'Issued' : 'Rejected'} by ${esc(sec.decided_by_name)} · ${fdt(sec.decided_at)}` : plural(ls.length, 'item')}</span>
-        ${st === 'pending' && canAdmin(d) ? `<div class="right"><button class="btn small tagbtn" data-issue="${d}">${ico('truck')}Approve &amp; issue</button><button class="btn small" data-reject="${d}">Reject</button></div>` : ''}</header>
+        <span class="meta">${sec?.decided_by_name ? `${sec.state === 'issued' ? 'Issued' : 'Rejected'} by ${esc(sec.decided_by_name)} · ${fdt(sec.decided_at)}` : plural(ls.length, 'item') + (st === 'pending' ? ' · waiting for ' + esc(lineApproverNames(d)) : '')}</span>
+        ${st === 'pending' && ['submitted', 'partial'].includes(j.status) && canApprove(d) && !ownReq ? `<div class="right"><button class="btn small tagbtn" data-issue="${d}">${ico('truck')}Approve &amp; issue</button><button class="btn small" data-reject="${d}">Reject</button></div>` : ''}</header>
         ${sec?.note ? `<div class="body"><div class="notice bad">Reason: ${esc(sec.note)}</div></div>` : ''}
         <div class="tablewrap"><table class="t stack"><thead><tr><th>Item</th><th>From</th><th class="num">Qty</th><th>Serials</th>
           ${st === 'issued' ? '<th class="num">Back</th><th class="num">Damaged</th><th class="num">Used</th><th class="num">Sold</th><th class="num">Still out</th>' : '<th class="num">In store now</th><th></th>'}</tr></thead><tbody>
@@ -124,24 +126,27 @@ ROUTES.job = {
         ${secs.some(s => s.state === 'issued') ? `<button class="btn" id="manifest">${ico('pdf')}Load-out Manifest (PDF)</button>` : ''}
         ${draft ? '<button class="btn danger" id="cancel">Cancel request</button>' : ''}
       </div>
-      ${draft ? `<div class="notice">Draft: nothing has left the store. Add the items, then press <b>Submit request</b>. Each service line’s admin approves and issues its own items${lineIds.some(d => canAdmin(d)) ? ' (items from lines you look after are issued as soon as you submit)' : ''}.</div>` : ''}
+      ${draft ? `<div class="notice">Draft: nothing has left the store. Add the items, then press <b>Submit request</b>. Each service line’s main or backup admin approves and issues its own items${isSuper() ? ' (as the Developer, yours are issued as soon as you submit)' : ''}.</div>` : ''}
       ${j.status === 'partial' ? `<div class="notice">Partly issued: some service lines have issued their items; others are still waiting for their admin.${isRequester ? ' You can confirm receipt once every line has been issued or rejected.' : ''}</div>` : ''}
       ${canConfirm ? `<div class="notice">You’re the requester. Check the items you were given against the list, then press <b>Confirm receipt</b> to sign the Requester box on the Load-out Manifest.</div>` : ''}
       ${crewPanel(j, crew, staff, crewCan)}
       ${lines.length ? lineIds.map(section).join('') : `<section class="panel"><div class="empty">No items yet. Press <b>Add items</b> and search or scan what’s needed. You can also tick items on the Inventory page and choose <b>Add to materials request</b>.</div></section>`}
-      ${j.notes ? `<section class="panel"><div class="body">${esc(j.notes)}</div></section>` : ''}`;
+      ${j.notes ? `<section class="panel"><div class="body">${esc(j.notes)}</div></section>` : ''}
+      ${isSuper() && !S.viewAs ? `<div class="po-danger dev"><button class="btn small link danger" id="dev-rev">${ico('undo')}Reverse &amp; remove this request</button><span class="sub">Developer only. Undoes everything it did to stock and removes it from every list. A full copy stays in the audit log.</span></div>` : ''}`;
   },
   bind(main) {
     const { j, lines, secs } = this.ctx || {}; if (!j) return;
     const b = id => $(id, main);
     if (b('#add')) b('#add').onclick = () => addJobItems(j);
     if (b('#edit')) b('#edit').onclick = () => editJob(j);
+    if (b('#dev-rev')) b('#dev-rev').onclick = () => devConfirm({ title: `Reverse ${j.job_no}`, expect: j.job_no, submit: 'Reverse & remove', sub: 'Stock goes back to how it was before this request, and the request is removed from every list.',
+      run: async c => { await q(sb.rpc('dev_reverse_request', { p_job: j.id, p_confirm: c })); toast(`${j.job_no} reversed`); go('#/jobs'); } });
     if (b('#cancel')) b('#cancel').onclick = async () => { if (!confirm('Cancel this request? Nothing has gone out, so nothing changes in stock.')) return; try { await q(sb.from('jobs').update({ status: 'cancelled' }).eq('id', j.id)); toast('Request cancelled'); render(); } catch (e) { toast(niceError(e), true); } };
     if (b('#submit')) b('#submit').onclick = () => {
       const ds = [...new Set(lines.map(l => l.items?.department_id))];
       return modal({ title: `Submit ${j.job_no}`, submit: 'Submit request',
         sub: `${plural(lines.length, 'item')} for ${esc(j.title)}, requested by ${esc(j.requester_name || '')}.`,
-        body: `<ul class="steps">${ds.map(d => `<li><b>${esc(lineName(d))}</b>: ${canAdmin(d) ? 'issued straight away (you’re an admin of this line)' : 'sent to this line’s admin to approve &amp; issue'}</li>`).join('')}</ul>`,
+        body: `<ul class="steps">${ds.map(d => `<li><b>${esc(lineName(d))}</b>: ${isSuper() ? 'issued straight away (you’re the Developer)' : 'sent to this line’s main or backup admin to approve &amp; issue'}</li>`).join('')}</ul>`,
         onSubmit: async () => { const st = await q(sb.rpc('submit_request', { p_job: j.id })); toast(st === 'out' ? `${j.job_no} issued` : `${j.job_no} submitted`); refresh(); } });
     };
     $$('[data-issue]', main).forEach(x => x.onclick = () => {
@@ -469,7 +474,8 @@ ROUTES.count = {
         <label class="check" style="margin:0"><input type="checkbox" id="only" ${this.filter.only ? 'checked' : ''}> Only items not counted yet</label>
         ${editable ? '<button class="btn small" id="matchall">Mark all shown as matching</button>' : ''}</div>
       <section class="panel"><div class="tablewrap"><table class="t stack counttbl" id="tbl"><thead><tr><th>Code</th><th>Description</th><th>Location</th><th class="num">On record</th><th class="num">Counted</th><th></th><th>Note</th></tr></thead><tbody></tbody></table></div></section>
-      ${editable ? `<div class="editbar"><span id="savestate">All changes saved</span><button class="btn small tagbtn" id="submit">Submit count</button></div>` : ''}`;
+      ${editable ? `<div class="editbar"><span id="savestate">All changes saved</span><button class="btn small tagbtn" id="submit">Submit count</button></div>` : ''}
+      ${isSuper() && !S.viewAs ? `<div class="po-danger dev"><button class="btn small link danger" id="dev-reset">${ico('undo')}Reset this count</button><span class="sub">Developer only. ${c.state === 'verified' ? 'Undoes the stock change it made, then removes it' : 'Removes it'} so Start count shows again for this month.</span></div>` : ''}`;
   },
   bind(main, parts) {
     if (this.mode === 'list') {
@@ -477,6 +483,9 @@ ROUTES.count = {
       return;
     }
     const { c, lines } = this; const ed = this.editable; const f = this.filter;
+    const dr = $('#dev-reset', main); if (dr) dr.onclick = () => devConfirm({ title: `Reset ${lineShort(c.department_id)} count`, expect: 'Count ' + c.id, submit: 'Reset count',
+      sub: c.state === 'verified' ? 'It was approved, so the stock change it made is undone first.' : 'Nothing changed stock yet, so it is simply discarded.',
+      run: async x => { await q(sb.rpc('dev_reset_count', { p_count: c.id, p_confirm: x })); toast('Count reset'); go('#/count'); } });
     const save = debounce(async () => {
       if (!this.dirty.size) return;
       const batch = [...this.dirty.values()]; this.dirty.clear();
@@ -515,8 +524,8 @@ ROUTES.count = {
         const left = lines.filter(l => l.counted_qty === null).length;
         if (left) return toast(`${plural(left, 'item')} still to count. Use “Only items not counted yet” to find them.`, true);
         const diffs = lines.filter(l => +l.counted_qty !== +l.system_qty);
-        return modal({ title: `Submit ${lineShort(c.department_id)} count`, submit: canAdmin(c.department_id) ? 'Submit & verify' : 'Submit for approval',
-          sub: `${plural(diffs.length, 'difference')} from the record. ${canAdmin(c.department_id) ? 'As the line admin, this verifies the count straight away.' : 'Your admin reviews the differences and approves.'}`,
+        return modal({ title: `Submit ${lineShort(c.department_id)} count`, submit: canApprove(c.department_id) ? 'Submit & verify' : 'Submit for approval',
+          sub: `${plural(diffs.length, 'difference')} from the record. ${canApprove(c.department_id) ? 'You approve for this line, so this verifies the count straight away.' : 'The line’s main or backup admin reviews the differences and approves.'}`,
           body: `${diffs.length ? `<table class="t"><thead><tr><th>Item</th><th>Location</th><th class="num">Record</th><th class="num">Counted</th><th>Note</th></tr></thead><tbody>${diffs.slice(0, 60).map(l => `<tr><td>${tag(l.items?.code)} ${esc(l.items?.name)}</td><td>${esc(locName(l.location_id))}</td><td class="num">${fq(l.system_qty)}</td><td class="num"><b>${fq(l.counted_qty)}</b></td><td class="sub">${esc(l.note || '')}</td></tr>`).join('')}</tbody></table>` : '<div class="notice ok">Everything matches the record.</div>'}
             <label class="f mt">Note for the admin (optional)<input type="text" name="note"></label>`,
           onSubmit: async x => { await new Promise(r => setTimeout(r, 800)); const st = await q(sb.rpc('submit_count', { p_count: c.id, p_note: x.note || null })); toast(st === 'verified' ? 'Count verified' : 'Count submitted for approval'); refresh(); } });
@@ -567,30 +576,33 @@ async function countSheetPdf(c, lines) {
 }
 
 // ================================================================ APPROVALS
+// who approves a line: its main and backup admin, else the Developer
+const lineApproverNames = d => { const x = S.depts.find(y => y.id === +d); const n = [x?.main_admin, x?.backup_admin].filter(id => id && isApproverOf(id, d)).map(id => personName(id)); return n.length ? n.join(' or ') : 'the Developer'; };
 const BATCH_KIND = { edit: 'Quantity changes', count: 'Monthly count', kits: 'Redress kit details', items: 'Item details' };
 ROUTES.approvals = {
   async load() {
     const v = S.appr.view;
     let qb = sb.from('change_batches').select('*, change_lines(*, items(code,name))').order('submitted_at', { ascending: v === 'pending' }).limit(v === 'pending' ? 500 : 80);
     qb = v === 'pending' ? qb.eq('state', 'pending') : qb.neq('state', 'pending');
-    if (!isAdmin()) qb = qb.eq('submitted_by', S.profile.id);
+    const apr = approverLineIds();
+    if (!apr.length) qb = qb.eq('submitted_by', S.profile.id);
     let rows = await q(qb);
     if (S.line) rows = rows.filter(b => b.department_id === +S.line);
     if (rows.some(b => b.kind === 'items')) await items();
     this.rows = rows; S.appr.sel = new Set([...S.appr.sel].filter(id => rows.some(r => r.id === id)));
-    const mrs = isAdmin() && v === 'pending' ? (await q(sb.from('jobs').select('id,job_no,title,requester_name,submitted_at,job_sections(department_id,state)').in('status', ['submitted', 'partial'])))
-      .filter(j => (j.job_sections || []).some(s => s.state === 'pending' && canAdmin(s.department_id) && (!S.line || s.department_id === +S.line))) : [];
+    const mrs = apr.length && v === 'pending' ? (await q(sb.from('jobs').select('id,job_no,title,requester_name,requester_id,created_by,submitted_at,job_sections(department_id,state)').in('status', ['submitted', 'partial'])))
+      .filter(j => (isSuper() || (j.requester_id !== S.profile.id && j.created_by !== S.profile.id)) && (j.job_sections || []).some(s => s.state === 'pending' && canApprove(s.department_id) && (!S.line || s.department_id === +S.line))) : [];
     const groups = S.depts.map(d => ({ d, bs: rows.filter(b => b.department_id === d.id) })).filter(g => g.bs.length);
-    return topbar(isAdmin() ? 'Approvals' : 'My requests', isAdmin() ? 'Quantity changes, monthly counts, kit and item details from staff. Approve one by one, in bulk, or a whole service line at once.' : 'Changes you sent for approval, and what happened to them.') +
+    return topbar(apr.length ? 'Approvals' : 'My requests', apr.length ? 'Quantity changes, monthly counts, kit and item details from staff. Approve one by one, in bulk, or a whole service line at once.' : 'Changes you sent for approval, and what happened to them.') +
       lineChips() + `<div class="filters"><div class="seg" id="seg">${[['pending', 'Waiting'], ['done', 'Decided']].map(([k, l]) => `<button data-v="${k}" class="${v === k ? 'on' : ''}">${l}</button>`).join('')}</div></div>
       ${mrs.length ? `<section class="panel"><header><h2>Materials requests to approve &amp; issue</h2><span class="meta">${mrs.length}</span></header><ul class="list">
-        ${mrs.map(j => `<li><a class="main" href="#/job/${j.id}"><div class="name">${tag(j.job_no)} ${esc(j.title)}</div><div class="sub">${esc(j.requester_name || '')} · submitted ${fdt(j.submitted_at)} · waiting: ${j.job_sections.filter(s => s.state === 'pending' && canAdmin(s.department_id)).map(s => lineShort(s.department_id)).join(', ')}</div></a>
+        ${mrs.map(j => `<li><a class="main" href="#/job/${j.id}"><div class="name">${tag(j.job_no)} ${esc(j.title)}</div><div class="sub">${esc(j.requester_name || '')} · submitted ${fdt(j.submitted_at)} · waiting: ${j.job_sections.filter(s => s.state === 'pending' && canApprove(s.department_id)).map(s => lineShort(s.department_id)).join(', ')}</div></a>
           <div class="end"><a class="btn small tagbtn" href="#/job/${j.id}">Open</a></div></li>`).join('')}</ul></section>` : ''}
       <div id="bulk"></div>
       ${groups.length || mrs.length ? groups.map(({ d, bs }) => `<section class="apgroup"><header><h2>${esc(d.name)}</h2><span class="meta">${plural(bs.length, 'request')}</span>
-        ${v === 'pending' && canAdmin(d.id) ? `<div class="right"><button class="btn small primary" data-all="${d.id}">Approve all ${esc(d.short_name || d.name)}</button></div>` : ''}</header>
-        ${bs.map(b => batchCard(b, v === 'pending' && canAdmin(b.department_id))).join('')}</section>`).join('')
-        : `<section class="panel"><div class="empty">${v === 'pending' ? (isAdmin() ? 'Nothing waiting for approval.' : 'You have nothing waiting for approval.') : 'No decisions yet.'}</div></section>`}`;
+        ${v === 'pending' && canApprove(d.id) ? `<div class="right"><button class="btn small primary" data-all="${d.id}">Approve all ${esc(d.short_name || d.name)}</button></div>` : ''}</header>
+        ${bs.map(b => batchCard(b, v === 'pending' && canApprove(b.department_id))).join('')}</section>`).join('')
+        : `<section class="panel"><div class="empty">${v === 'pending' ? (apr.length ? 'Nothing waiting for approval.' : 'You have nothing waiting for approval.') : 'No decisions yet.'}</div></section>`}`;
   },
   bind(main) {
     bindLineChips(main);

@@ -18,7 +18,8 @@ const S = {
   certs: { view: 'soon', tab: 'certs' },
   appr: { view: 'pending', sel: new Set() },
   shellReady: false, channel: null,
-  viewAs: (() => { try { return JSON.parse(sessionStorage.getItem('nest.viewAs') || 'null'); } catch (e) { return null; } })(),
+  viewAs: (() => { try { const v = JSON.parse(sessionStorage.getItem('nest.viewAs') || 'null'); return v && !('inventory' in v) ? null : v; } catch (e) { return null; } })(),
+  invMy: (() => { try { return localStorage.getItem('nest.invMy') === '1'; } catch (e) { return false; } })(),
 };
 
 // ---------------------------------------------------------------- helpers
@@ -55,20 +56,38 @@ const svcLabel = id => { const s = svcById(id); if (!s) return '—'; const m = 
 const subtypesOf = (kind, all) => (S.subtypes || []).filter(t => t.kind === kind && (all || t.active)).sort((a, b) => a.sort - b.sort || a.name.localeCompare(b.name));
 const subtypeName = id => (S.subtypes || []).find(t => t.id === +id)?.name || '';
 const CERT_KINDS = { certification: 'Certification', calibration: 'Calibration', maintenance: 'Maintenance', inspection: 'Inspection', pressure_test: 'Pressure test' };
-const ROLE_LABEL = { pending: 'Waiting for approval', staff: 'Staff', admin: 'Admin', superadmin: 'Super Admin', management: 'Management', disabled: 'No access' };
+const ROLE_LABEL = { pending: 'Waiting for approval', staff: 'Staff', superadmin: 'Developer', disabled: 'No access', admin: 'Admin', viewer: 'Viewer', management: 'Viewer' };
+// 3.0.4: a role per app. The Developer (key 'superadmin') is admin everywhere; being an admin in one app gives nothing in another.
+const APP_ROLES = { inventory: [['admin', 'Admin'], ['staff', 'Staff'], ['viewer', 'Viewer']], po: [['staff', 'Staff'], ['viewer', 'Viewer']], proforma: [['admin', 'Admin'], ['staff', 'Staff']] };
+const APP_ROLE_HINT = { inventory: { admin: 'Manages items and stock. Approves for the lines where they are main or backup admin.', staff: 'Requests, counts and returns for their service lines.', viewer: 'Sees the Overview and stock, and adds jobs to the Job planner.' },
+  po: { staff: 'Raises, revises, cancels and closes their own POs.', viewer: 'Sees the Overview and POs, and downloads them.' }, proforma: { admin: 'Manages PFIs and quotes.', staff: 'Makes PFIs and quotes.' } };
+const appRoleOf = (p, app) => !p ? null : p.role === 'superadmin' ? (app === 'po' ? 'staff' : 'admin') : p.role !== 'staff' ? null
+  : (p.apps || []).includes(app) ? ((p.app_roles || {})[app] || 'staff') : null;
 
 // roles & service lines
 const realRole = () => S.profile?.role;
 const realSuper = () => realRole() === 'superadmin';
-const role = () => (S.viewAs && realSuper()) ? S.viewAs.role : realRole();
+const viewAsOn = () => !!(S.viewAs && realSuper());
+const role = () => viewAsOn() ? (S.viewAs.role === 'superadmin' ? 'superadmin' : 'staff') : realRole();
 const isSuper = () => role() === 'superadmin';
-const isAdmin = () => ['admin', 'superadmin'].includes(role());
-const isActive = () => ['staff', 'admin', 'superadmin', 'management'].includes(role());
-const isMgmt = () => role() === 'management';
-const myLineIds = () => isSuper() ? S.depts.map(d => d.id) : (S.viewAs && realSuper()) ? (S.viewAs.lines || []).map(Number) : S.members.filter(m => m.profile_id === S.profile?.id).map(m => m.department_id);
+const appRole = app => viewAsOn() ? (S.viewAs.role === 'superadmin' ? appRoleOf({ role: 'superadmin' }, app) : (S.viewAs[app] || null)) : appRoleOf(S.profile, app);
+const invRole = () => appRole('inventory');
+// Inventory admins can switch to My view (what staff see) and back
+const invAdminReal = () => invRole() === 'admin';
+const invMyView = () => !isSuper() && invAdminReal() && S.invMy;
+const isAdmin = () => invAdminReal() && !invMyView();
+const isActive = () => ['staff', 'superadmin'].includes(role());
+const isMgmt = () => invRole() === 'viewer';
+const myLineIds = () => isSuper() ? S.depts.map(d => d.id) : viewAsOn() ? (S.viewAs.lines || []).map(Number) : S.members.filter(m => m.profile_id === S.profile?.id).map(m => m.department_id);
 const inLine = d => myLineIds().includes(+d);
-const canAct = d => isSuper() || role() === 'admin' || (role() === 'staff' && inLine(d));
-const canAdmin = d => isSuper() || (role() === 'admin' && inLine(d));
+const canAct = d => isAdmin() || (['staff', 'admin'].includes(invRole()) && inLine(d));
+const canAdmin = d => isAdmin();
+const myRoleLabel = () => isSuper() ? 'Developer' : S.shellApp === 'admin' || S.shellApp === 'people' ? 'Staff' : (ROLE_LABEL[appRole(curApp())] || 'Staff') + (invMyView() && curApp() === 'inventory' ? ' · My view' : '');
+// approving a line's requests and counts: its main or backup admin, or the Developer
+const approverLineIds = () => isSuper() ? S.depts.map(d => d.id) : !isAdmin() ? [] : viewAsOn() ? (S.viewAs.lines || []).map(Number)
+  : S.depts.filter(d => [d.main_admin, d.backup_admin].includes(S.profile?.id)).map(d => d.id);
+const canApprove = d => approverLineIds().includes(+d);
+const isApproverOf = (pid, d) => { const p = S.people[pid]; const x = S.depts.find(y => y.id === +d); return !!p && (p.role === 'superadmin' || (appRoleOf(p, 'inventory') === 'admin' && !!x && [x.main_admin, x.backup_admin].includes(pid))); };
 const lineName = id => S.depts.find(d => d.id === +id)?.name || '—';
 const lineShort = id => { const d = S.depts.find(x => x.id === +id); return d ? (d.short_name || d.name) : '—'; };
 const locName = id => S.locs.find(l => l.id === +id)?.name || '—';
@@ -76,36 +95,44 @@ const placeholderLoc = () => S.locs.find(l => l.is_placeholder);
 const realLocs = () => S.locs.filter(l => l.active && !l.is_placeholder);
 const personName = (id, fallback = '') => { const p = S.people[id]; return p ? (p.full_name || p.email) : fallback; };
 const setting = (k, d) => S.settings[k] ?? d;
-// 2.8: which apps a person can open (the Super Admin always has all of them)
-// 3.0.3: while viewing as a role, apps follow that role (Inventory and PO; PeopleCore only for the Super Admin until go-live)
-const appAllowed = app => (S.viewAs && realSuper()) ? (S.viewAs.role === 'superadmin' || ['inventory', 'po'].includes(app)) : (realSuper() || (S.profile?.apps || []).includes(app));
-const ADMIN_ROUTES = ['team', 'audit', 'settings'];
+// 2.8: which apps a person can open (the Developer always has all of them)
+// 3.0.3: while viewing as a role, apps follow that role (Inventory and PO; PeopleCore only for the Developer until go-live)
+const appAllowed = app => viewAsOn() ? (S.viewAs.role === 'superadmin' || !!S.viewAs[app]) : (realSuper() || (realRole() === 'staff' && (S.profile?.apps || []).includes(app)));
+// 3.0.4: PeopleCore is under construction until the Developer opens it (the Developer and the testers they tick can go in)
+const peopleBuilding = () => { const c = setting('people_construction', null); return !!(c && c.on) && !realSuper() && !((c.testers || []).includes(S.profile?.id)); };
+const ADMIN_ROUTES = ['team', 'audit', 'settings', 'devtools'];
 
 // "View as" is read-only: block every write while it's on
 const VIEW_MSG = 'You’re viewing Nest as another role, so changes are switched off. Press Exit on the orange bar to make changes.';
-const MGMT_MSG = 'Management access is view-only, so changes are switched off.';
-const readOnly = () => !!S.viewAs || realRole() === 'management';
+const MGMT_MSG = 'You have view-only access to this app, so changes are switched off.';
+const curApp = () => S.shellApp === 'po' ? 'po' : S.shellApp === 'proforma' ? 'proforma' : 'inventory';
+const readOnly = () => !!S.viewAs || appRole(curApp()) === 'viewer';
 (() => {
   const READ_RPC = new Set(['month_totals', 'period_flows', 'mark_notifications_read', 'log_signed_export', 'save_plan_snapshot', 'alert_status', 'preview_alert']);
   const blocked = () => { const msg = S.viewAs ? VIEW_MSG : MGMT_MSG; const p = new Proxy(function () { }, { get: (t, k) => k === 'then' ? (res => res({ data: null, error: { message: msg } })) : () => p, apply: () => p }); return p; };
   const _rpc = sb.rpc.bind(sb), _from = sb.from.bind(sb);
   // 3.0: PeopleCore is everyone's own HR self-service, so Management can use it too (but nothing changes while viewing as a role)
   const HR_READ = /^hr_(directory|team|my_profile|my_approvals|next_empno)$/;
-  sb.rpc = (fn, args, opts) => (readOnly() && !READ_RPC.has(fn) && !(fn === 'log_signed_export' && S.viewAs) && !HR_READ.test(fn) && !(/^hr_/.test(fn) && !S.viewAs)) ? blocked() : _rpc(fn, args, opts);
-  sb.from = t => { const b = _from(t); if (readOnly()) ['insert', 'update', 'delete', 'upsert'].forEach(m => { b[m] = () => blocked(); }); return b; };
+  // 3.0.4: only "View as" blocks writes here; what a Viewer can't do, the server refuses
+  sb.rpc = (fn, args, opts) => (S.viewAs && !READ_RPC.has(fn) && fn !== 'log_signed_export' && !HR_READ.test(fn)) ? blocked() : _rpc(fn, args, opts);
+  sb.from = t => { const b = _from(t); if (S.viewAs) ['insert', 'update', 'delete', 'upsert'].forEach(m => { b[m] = () => blocked(); }); return b; };
 })();
 function setViewAs(v) { S.viewAs = v; try { v ? sessionStorage.setItem('nest.viewAs', JSON.stringify(v)) : sessionStorage.removeItem('nest.viewAs'); } catch (e) { } S.shellReady = false; S.inv.edit = false; S.inv.changes.clear(); refreshAlerts(); render(); }
 function viewAsBar() {
-  if (!(S.viewAs && realSuper())) return '';
-  return `<div class="viewas-bar">Viewing as <b>${esc(ROLE_LABEL[S.viewAs.role])}</b>${!['superadmin', 'management'].includes(S.viewAs.role) ? ' · ' + esc((S.viewAs.lines || []).map(lineShort).join(', ') || 'no service line') : ''} · read only <button class="btn small" id="va-exit">Exit</button></div>`;
+  if (!viewAsOn()) return '';
+  const v = S.viewAs; const bits = v.role === 'superadmin' ? ['Developer'] : [['inventory', 'Inventory'], ['po', 'PO']].filter(([k]) => v[k]).map(([k, l]) => `${l} ${ROLE_LABEL[v[k]]}`);
+  return `<div class="viewas-bar">Viewing as <b>${esc(bits.join(' · ') || 'Staff, no apps')}</b>${v.inventory && v.inventory !== 'viewer' ? ' · ' + esc((v.lines || []).map(lineShort).join(', ') || 'no service line') : ''} · read only <button class="btn small" id="va-exit">Exit</button></div>`;
 }
 function bindViewAs() { const x = $('#va-exit'); if (x) x.onclick = () => setViewAs(null); }
 function openViewAs() {
+  const sel = (n, app) => `<label class="f">${app === 'inventory' ? 'Inventory' : 'Purchase Order'}<select name="${n}"><option value="">No access</option>${APP_ROLES[app].map(([k, l]) => opt(k, l, app === 'inventory' ? 'staff' : 'staff')).join('')}</select></label>`;
   return modal({
-    title: 'View Nest as…', sub: 'See exactly what a role sees: menu, what can be edited, approvals and reminders. Read only: nothing can be changed while viewing.', submit: 'Start viewing',
-    body: `<label class="f">Role<select name="role">${opt('staff', 'Staff')}${opt('admin', 'Admin')}${opt('management', 'Management (view-only)')}</select></label>
-      <div class="f">Service line(s)<span class="hint">Not needed for Management.</span>${S.depts.map(d => `<label class="check"><input type="checkbox" name="l${d.id}"> ${esc(d.name)}</label>`).join('')}</div>`,
-    onSubmit: async x => { const lines = S.depts.filter(d => x['l' + d.id]).map(d => d.id); if (!lines.length && x.role !== 'management') throw new Error('Tick at least one service line.'); setTimeout(() => setViewAs({ role: x.role, lines }), 0); }
+    title: 'View Nest as…', sub: 'See exactly what a person with these roles sees: menu, what can be edited, approvals and reminders. Read only: nothing can be changed while viewing.', submit: 'Start viewing',
+    body: `<div class="grid2">${sel('inventory', 'inventory')}${sel('po', 'po')}</div>
+      <div class="f">Service line(s)<span class="hint">An Admin here is treated as main admin of the lines you tick. Not needed for a Viewer.</span>${S.depts.map(d => `<label class="check"><input type="checkbox" name="l${d.id}"> ${esc(d.name)}</label>`).join('')}</div>`,
+    onSubmit: async x => { const lines = S.depts.filter(d => x['l' + d.id]).map(d => d.id);
+      if (x.inventory && x.inventory !== 'viewer' && !lines.length) throw new Error('Tick at least one service line.');
+      setTimeout(() => setViewAs({ role: 'staff', inventory: x.inventory || null, po: x.po || null, lines }), 0); }
   });
 }
 function niceError(e) {
@@ -194,6 +221,8 @@ const I = {
   pay: '<rect x="2" y="6" width="20" height="13" rx="2"/><circle cx="12" cy="12.5" r="2.8"/><path d="M6 9.5h.01M18 15.5h.01"/>',
   building: '<path d="M3 21V8l9-5 9 5v13"/><path d="M9 21v-6h6v6"/>',
   kit: '<rect x="3" y="7" width="18" height="13" rx="2"/><path d="M8 7V5a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2M3 12h18"/>',
+  wrench: '<path d="M14.7 6.3a4 4 0 0 0-5.4 5.2L3.5 17.3a1.8 1.8 0 0 0 2.6 2.6l5.8-5.8a4 4 0 0 0 5.2-5.4l-2.6 2.6-2.4-.4-.4-2.4z"/>',
+  undo: '<path d="M9 14L4 9l5-5"/><path d="M4 9h10.5a5.5 5.5 0 0 1 0 11H11"/>',
 };
 const ico = n => `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${I[n]}</svg>`;
 
@@ -216,7 +245,7 @@ function modal({ title, sub = '', body, submit = 'Save', cancel = 'Cancel', onSu
       const data = Object.fromEntries(new FormData(f).entries());
       $$('input[type=checkbox]', f).forEach(c => { if (c.name) data[c.name] = c.checked; });
       try { const r = await onSubmit(data, d); close(r ?? true); }
-      catch (ex) { console.error(ex); err.textContent = niceError(ex); err.hidden = false; btn.disabled = false; d.querySelector('.mb').scrollTop = 0; }
+      catch (ex) { if (ex && ex.quiet) { err.hidden = true; btn.disabled = false; return; } console.error(ex); err.textContent = niceError(ex); err.hidden = false; btn.disabled = false; d.querySelector('.mb').scrollTop = 0; }
     };
     d.showModal();
     if (onOpen) onOpen(d, close);
@@ -234,7 +263,7 @@ async function loadLookups() {
     q(sb.from('departments').select('*').order('sort')),
     q(sb.from('categories').select('*').order('sort')),
     q(sb.from('locations').select('*').order('is_placeholder').order('name')),
-    q(sb.from('profiles').select('id,full_name,email,role,created_at,apps,job_title,signature_id')),
+    q(sb.from('profiles').select('id,full_name,email,role,created_at,apps,app_roles,job_title,signature_id')),
     q(sb.from('memberships').select('*')),
     q(sb.from('app_settings').select('*')),
     q(sb.from('po_service_lines').select('*').order('sort')).catch(() => []),
@@ -274,20 +303,21 @@ async function refreshAlerts() {
     const mine = myLineIds(); const t = localISO(0);
     const [{ count: unreadReal }, appr, counts, kits, certs, overdue, mrs, sos] = await Promise.all([
       sb.from('notifications').select('id', { count: 'exact', head: true }).is('read_at', null),
-      isAdmin() ? q(sb.from('change_batches').select('id,department_id').eq('state', 'pending')) : [],
+      approverLineIds().length ? q(sb.from('change_batches').select('id,department_id,submitted_by').eq('state', 'pending')) : [],
       q(sb.from('counts').select('department_id,state').eq('month', monthISO())),
       q(sb.from('kit_status').select('unit_id,department_id,expiry_on').lte('expiry_on', localISO(+setting('kit_warn_days', 60))).not('expiry_on', 'is', null)),
       q(sb.from('certifications').select('id,item_id,items(department_id)').eq('superseded', false).not('due_on', 'is', null).lte('due_on', localISO(+setting('cert_warn_days', 30)))),
       q(sb.from('checkouts').select('id,items(department_id)').is('closed_at', null).lt('due_back', t)),
-      q(sb.from('jobs').select('id,job_no,status,requester_id,expected_return,received_at,job_sections(department_id,state)').in('status', ['submitted', 'partial', 'out'])),
+      q(sb.from('jobs').select('id,job_no,status,requester_id,created_by,expected_return,received_at,job_sections(department_id,state)').in('status', ['submitted', 'partial', 'out'])),
       q(sb.from('report_signoffs').select('id,ref,status,department_id,prepared_by').in('status', ['review', 'approval', 'returned'])).catch(() => []),
     ]);
     const unread = S.viewAs ? 0 : unreadReal;
     const R = [];
-    const myAppr = appr.filter(b => canAdmin(b.department_id));
+    const myAppr = appr.filter(b => canApprove(b.department_id));
     S.pending = myAppr.length;
     if (myAppr.length) R.push({ kind: 'approval', title: `${plural(myAppr.length, 'request')} waiting for your approval`, link: '#/approvals' });
-    const mrWait = isAdmin() ? mrs.filter(j => (j.job_sections || []).some(s => s.state === 'pending' && canAdmin(s.department_id))) : [];
+    // 3.0.4: the line's main or backup admin approves; nobody approves their own request
+    const mrWait = mrs.filter(j => ['submitted', 'partial'].includes(j.status) && (isSuper() || (j.requester_id !== S.profile.id && j.created_by !== S.profile.id)) && (j.job_sections || []).some(s => s.state === 'pending' && canApprove(s.department_id)));
     S.pendingMR = mrWait.length;
     if (mrWait.length) R.push({ kind: 'approval', title: `${plural(mrWait.length, 'materials request')} waiting for you to approve & issue`, link: mrWait.length === 1 ? '#/job/' + mrWait[0].id : '#/jobs?v=waiting' });
     const meId = S.viewAs ? null : S.profile.id;
@@ -506,45 +536,48 @@ function renderPending() {
 // Report sign-off: can I sign it at its current step?
 function canSignReport(r) {
   const me = S.viewAs ? null : S.profile.id;
-  if (r.status === 'review') return role() === 'admin' && r.department_id != null && myLineIds().includes(r.department_id) && r.prepared_by !== me;
+  if (r.status === 'review') return !isSuper() && isAdmin() && r.department_id != null && canApprove(r.department_id) && r.prepared_by !== me;
   if (r.status === 'approval') return isSuper();
   return false;
 }
 
 function navItems() {
   if (S.shellApp === 'po' && typeof poNav === 'function') return poNav();
+  if (S.shellApp === 'people' && peopleBuilding()) return { main: [['', 'Nest home', 'grid']], setup: [] };
   if (S.shellApp === 'people' && typeof peopleNav === 'function') return peopleNav();
-  if (S.shellApp === 'admin') return { main: [...(isAdmin() ? [['team', 'Team & access', 'users'], ['audit', 'Audit log', 'audit']] : []), ...(isSuper() ? [['settings', 'Nest settings', 'gear']] : []), ['account', 'My account', 'user']],
+  if (S.shellApp === 'admin') return { main: [...(isSuper() ? [['team', 'Team & access', 'users'], ['audit', 'Audit log', 'audit'], ['settings', 'Nest settings', 'gear'], ['devtools', 'Developer tools', 'wrench']] : []), ['account', 'My account', 'user']],
     setup: [...(appAllowed('inventory') ? [['dashboard', 'Inventory', 'box']] : []), ...(appAllowed('po') ? [['po/overview', 'Purchase Order', 'audit']] : []), ...(appAllowed('people') ? [['people', 'PeopleCore', 'users']] : [])] };
   const main = [['dashboard', 'Overview', 'home'], ['inventory', 'Inventory', 'box'], ['scan', 'Scan', 'scan'],
     ['jobs', 'Materials requests', 'truck'], ['planner', 'Job planner', 'plan'], ['checkouts', 'Out on jobs', 'out'], ['count', 'Monthly count', 'count'],
     ['certs', 'Certificates & kits', 'cert'], ['reports', 'Reports', 'chart'], ['signoffs', 'Sign-offs', 'sign'], ['activity', 'Activity', 'clock'],
-    ['approvals', isAdmin() ? 'Approvals' : 'My requests', 'check']];
+    ['approvals', approverLineIds().length ? 'Approvals' : 'My requests', 'check']];
   if (isMgmt()) return { main: main.filter(([r]) => ['dashboard', 'inventory', 'planner', 'reports', 'signoffs'].includes(r)), setup: [] };
-  const setup = isAdmin() ? [['locations', 'Locations', 'pin'], ['labels', 'Labels', 'label'], ['invsettings', 'Inventory settings', 'gear'], ['team', 'Nest admin', 'users']] : [];
-  return { main, setup };
+  const setup = [...(isAdmin() ? [['locations', 'Locations', 'pin'], ['labels', 'Labels', 'label'], ['invsettings', 'Inventory settings', 'gear']] : []), ...(isSuper() ? [['team', 'Nest admin', 'users']] : [])];
+  // 3.0.4: Inventory admins switch between what staff see (My view) and the admin tools
+  const top = invAdminReal() && !isSuper() ? `<div class="seg viewseg" id="invmode" role="group" aria-label="View"><button type="button" data-m="my" class="${invMyView() ? 'on' : ''}">My view</button><button type="button" data-m="admin" class="${invMyView() ? '' : 'on'}">Admin view</button></div>` : '';
+  return { main, setup, top };
 }
 
 function shell() {
   if (S.shellReady) return;
-  const p = S.profile; const { main, setup } = navItems();
-  const link = ([r, l, i]) => i === null ? `<a class="subitem" href="#/${r}" data-r="${r}">${l}</a>` : `<a href="#/${r}" data-r="${r}">${ico(i)}${l}${r === 'approvals' && isAdmin() ? `<span class="count" id="pendingCount" ${S.pending ? '' : 'hidden'}>${S.pending}</span>` : ''}</a>`;
+  const p = S.profile; const { main, setup, top } = navItems();
+  const link = ([r, l, i]) => i === null ? `<a class="subitem" href="#/${r}" data-r="${r}">${l}</a>` : `<a href="#/${r}" data-r="${r}">${ico(i)}${l}${r === 'approvals' && approverLineIds().length ? `<span class="count" id="pendingCount" ${S.pending ? '' : 'hidden'}>${S.pending}</span>` : ''}</a>`;
   $('#app').innerHTML = `<div class="shell">
     <aside class="side">
       <a class="brand" href="#/"><img src="brand/mark-96.png" alt="">
         <span class="brand-name">${wordmark()}<small>Nest · ${S.shellApp === 'po' ? 'Purchasing' : S.shellApp === 'admin' ? 'Admin' : S.shellApp === 'people' ? 'PeopleCore' : 'Inventory'}</small></span></a>
       <a class="apps-link" href="#/">${ico('grid')}All apps</a>
-      <nav class="nav">${main.map(link).join('')}
+      <nav class="nav">${top || ''}${main.map(link).join('')}
         ${setup.length ? `<div class="nav-group">${S.shellApp === 'admin' ? 'Apps' : navItems().setupLabel || 'Setup'}</div>${setup.map(link).join('')}` : ''}</nav>
       <div class="side-foot">${CFG.TAGLINE ? `<div class="motto">${esc(CFG.TAGLINE)}</div>` : ''}
-        <a class="who" href="#/account">${esc(p.full_name || p.email)}</a><div class="role">${S.shellApp === 'people' && typeof hrRole === 'function' ? esc(hrRole() === 'hr_admin' ? 'HR admin' : hrRole() === 'hr_officer' ? 'HR officer' : S.hr?.me?.card?.title || ROLE_LABEL[role()]) : ROLE_LABEL[role()] + (!isSuper() && !isMgmt() ? ' · ' + esc(myLineIds().map(lineShort).join(', ') || 'no service line') : '')}</div>
+        <a class="who" href="#/account">${esc(p.full_name || p.email)}</a><div class="role">${S.shellApp === 'people' && typeof hrRole === 'function' ? esc(hrRole() === 'hr_admin' ? 'HR admin' : hrRole() === 'hr_officer' ? 'HR officer' : S.hr?.me?.card?.title || ROLE_LABEL[role()]) : esc(myRoleLabel()) + (S.shellApp !== 'po' && S.shellApp !== 'admin' && !isSuper() && !isMgmt() ? ' · ' + esc(myLineIds().map(lineShort).join(', ') || 'no service line') : '')}</div>
         ${realSuper() ? `<button class="btn small viewas-btn" id="viewas">${S.viewAs ? 'Change view' : 'View as…'}</button>` : ''}
         <a href="#" id="signout">Sign out</a></div>
     </aside>${viewAsBar()}
     <main id="main"></main>
     <button class="bell" id="bell" aria-label="Notifications">${ico('bell')}<span class="bell-count" hidden></span></button>
-    ${S.shellApp === 'po' && typeof poBottomBar === 'function' ? poBottomBar() : S.shellApp === 'people' && typeof peopleBottomBar === 'function' ? peopleBottomBar() : S.shellApp === 'admin' ? `<nav class="bottombar">
-      ${isAdmin() ? `<a href="#/team" data-r="team">${ico('users')}Team</a><a href="#/audit" data-r="audit">${ico('audit')}Audit</a>` : ''}${isSuper() ? `<a href="#/settings" data-r="settings">${ico('gear')}Settings</a>` : ''}
+    ${S.shellApp === 'po' && typeof poBottomBar === 'function' ? poBottomBar() : S.shellApp === 'people' && !peopleBuilding() && typeof peopleBottomBar === 'function' ? peopleBottomBar() : S.shellApp === 'admin' ? `<nav class="bottombar">
+      ${isSuper() ? `<a href="#/team" data-r="team">${ico('users')}Team</a><a href="#/devtools" data-r="devtools">${ico('wrench')}Tools</a><a href="#/settings" data-r="settings">${ico('gear')}Settings</a>` : ''}
       <a href="#/account" data-r="account">${ico('user')}Account</a><a href="#/" data-r="home">${ico('grid')}Apps</a></nav>` : `<nav class="bottombar">
       <a href="#/dashboard" data-r="dashboard">${ico('home')}Overview</a>
       <a href="#/inventory" data-r="inventory">${ico('box')}Inventory</a>
@@ -555,6 +588,7 @@ function shell() {
   $('#signout').onclick = e => { e.preventDefault(); sb.auth.signOut(); };
   $('#bell').onclick = openBell;
   const va = $('#viewas'); if (va) va.onclick = openViewAs; bindViewAs();
+  $$('#invmode button').forEach(b => b.onclick = () => { S.invMy = b.dataset.m === 'my'; try { localStorage.setItem('nest.invMy', S.invMy ? '1' : '0'); } catch (e) { } S.shellReady = false; S.inv.edit = false; S.inv.changes.clear(); render(); });
   document.body.classList.toggle('viewing-as', !!(S.viewAs && realSuper()));
   S.shellReady = true; refreshAlerts();
 }
@@ -562,7 +596,10 @@ function setNav(r) { $$('[data-r]').forEach(a => a.classList.toggle('on', a.data
 
 const ROUTES = {};
 const APP_NAMES = { inventory: 'Inventory', po: 'Purchase Order', people: 'PeopleCore' };
-ROUTES.noapp = { load: async () => topbar(APP_NAMES[S.shellApp] || 'Nest') + `<div class="notice">You don’t have access to ${esc(APP_NAMES[S.shellApp] || 'this app')}. Ask the Nest admin if you need it.</div><a class="btn" href="#/">Back to Nest home</a>` };
+ROUTES.building = { load: async () => `<div class="build-screen"><div class="build-card"><span class="build-ico">${ico('wrench')}</span><div><span class="maint-pill">PeopleCore · under construction</span></div>
+    <h1>PeopleCore is being built</h1><p>Your HR self-service (profile, leave, requests, approvals and the company directory) opens here soon. Nothing for you to do yet.</p>
+    <a class="btn primary" href="#/">Back to Nest home</a></div></div>` };
+ROUTES.noapp = { load: async () => topbar(APP_NAMES[S.shellApp] || 'Nest') + `<div class="notice">You don’t have access to ${esc(APP_NAMES[S.shellApp] || 'this app')}. Ask the Developer if you need it.</div><a class="btn" href="#/">Back to Nest home</a>` };
 let renderSeq = 0;
 async function render(opts = {}) {
   if (!S.session || !isActive()) return;
@@ -577,8 +614,9 @@ async function render(opts = {}) {
   shell();
   // 2.8: an app someone doesn't have can't be opened, even by typing its address
   const blocked = (app === 'inventory' || app === 'people') && !appAllowed(app);
-  const view = blocked ? ROUTES.noapp : (ROUTES[r] || ROUTES.dashboard);
-  setNav(r === 'item' ? 'inventory' : r === 'job' ? 'jobs' : r === 'po' ? (parts[1] && isNaN(+parts[1]) ? 'po/' + parts[1] : 'po') : r === 'people' ? (typeof hrNavKey === 'function' ? hrNavKey(parts) : 'people') : r);
+  // 3.0.4: PeopleCore is under construction for everyone but the Developer and the testers they tick
+  const view = blocked ? ROUTES.noapp : app === 'people' && peopleBuilding() ? ROUTES.building : (ROUTES[r] || ROUTES.dashboard);
+  setNav(r === 'item' ? 'inventory' : r === 'job' ? 'jobs' : r === 'po' ? (parts[1] && isNaN(+parts[1]) ? 'po/' + parts[1] : 'po') : r === 'people' ? (typeof pcNavKey === 'function' ? pcNavKey(parts) : typeof hrNavKey === 'function' ? hrNavKey(parts) : 'people') : r);
   let main = $('#main'); const seq = ++renderSeq;
   const y = window.scrollY;
   if (!opts.quiet) main.innerHTML = '<div class="loading">Loading…</div>';
@@ -655,14 +693,14 @@ function appTile(scope, href, icon, name, desc, meta, live) {
 }
 // an app the person hasn't been given: shown, but locked
 function lockedTile(icon, name, desc) {
-  return `<div class="tile locked" aria-disabled="true" title="You don’t have access to ${name}"><span class="t-ico">${ico(icon)}</span><span class="t-name">${name}<span class="t-lock" aria-hidden="true">${ico('lock')}</span></span><span class="t-desc">${desc}</span><span class="t-meta">You don’t have access. Ask the Nest admin.</span></div>`;
+  return `<div class="tile locked" aria-disabled="true" title="You don’t have access to ${name}"><span class="t-ico">${ico(icon)}</span><span class="t-name">${name}<span class="t-lock" aria-hidden="true">${ico('lock')}</span></span><span class="t-desc">${desc}</span><span class="t-meta">You don’t have access. Ask the Developer.</span></div>`;
 }
 async function renderLauncher() {
   const p = S.profile; const first = S.viewAs ? '' : (p.full_name || '').split(' ')[0];
   const apps = p.apps || ['inventory'];
   $('#app').innerHTML = `${viewAsBar()}<div class="launcher">${typeof maintBars === 'function' ? maintBars('launcher') : ''}
     <header class="l-top"><a class="brand" href="#/"><img src="brand/mark-96.png" alt=""><span class="brand-name">${wordmark()}<small>Nest</small></span></a>
-      <div class="l-right">${isAdmin() ? `<a class="btn small ghost" href="#/team">${ico('gear')}Nest admin</a>` : ''}${realSuper() ? `<button class="btn small ghost" id="viewas">${S.viewAs ? 'Change view' : 'View as…'}</button>` : ''}<button class="bell inline" id="bell" aria-label="Notifications">${ico('bell')}<span class="bell-count" hidden></span></button>
+      <div class="l-right">${isSuper() ? `<a class="btn small ghost" href="#/team">${ico('gear')}Nest admin</a>` : ''}${realSuper() ? `<button class="btn small ghost" id="viewas">${S.viewAs ? 'Change view' : 'View as…'}</button>` : ''}<button class="bell inline" id="bell" aria-label="Notifications">${ico('bell')}<span class="bell-count" hidden></span></button>
       <a class="btn small ghost" href="#/account">${esc(p.full_name || p.email)}</a><button class="btn small ghost" id="out">Sign out</button></div></header>
     <section class="l-hero"><img class="l-mark" src="brand/mark.png" alt="">
       <div><div class="l-tag">${esc(CFG.TAGLINE || '')}</div><h1>${first ? `Welcome back, ${esc(first)}` : 'Welcome'}</h1>
@@ -670,9 +708,10 @@ async function renderLauncher() {
     <section class="tiles">
       ${appAllowed('inventory') ? appTile('inventory', '#/dashboard', 'box', 'Inventory', 'Equipment, stock, materials requests, monthly counts and reports.', '<span class="t-meta" id="invMeta">Open</span>', true) : lockedTile('box', 'Inventory', 'Equipment, stock, materials requests, monthly counts and reports.')}
       ${typeof poCanView === 'function' && poCanView() ? appTile('po', '#/po/overview', 'audit', 'Purchase Order', 'Raise, sign and track purchase orders to OEMs and suppliers.', '<span class="t-meta" id="poMeta">Open</span>', true) : lockedTile('audit', 'Purchase Order', 'Raise, sign and track purchase orders to OEMs and suppliers.')}
-      ${appAllowed('people') ? appTile('people', '#/people', 'users', 'PeopleCore', 'Your HR self-service: profile, leave, requests, approvals and the company directory.', '<span class="t-meta" id="hrMeta">Open</span>', true)
+      ${appAllowed('people') && peopleBuilding() ? appTile('people', null, 'users', 'PeopleCore', 'Your HR self-service: profile, leave, requests, approvals and the company directory.', '<span class="t-meta">Under construction</span><span class="t-badge build">Under construction</span>')
+        : appAllowed('people') ? appTile('people', '#/people', 'users', 'PeopleCore', 'Your HR self-service: profile, leave, requests, approvals and the company directory.', `<span class="t-meta" id="hrMeta">Open</span>${setting('people_construction', null)?.on ? '<span class="t-badge build">Under construction · testing</span>' : ''}`, true)
         : setting('people_live', false) === true ? lockedTile('users', 'PeopleCore', 'Your HR self-service: profile, leave, requests, approvals and the company directory.')
-        : appTile('people', null, 'users', 'PeopleCore', 'Your HR self-service: profile, leave, requests, approvals and the company directory.', '<span class="t-meta">Coming soon</span>')}
+        : appTile('people', null, 'users', 'PeopleCore', 'Your HR self-service: profile, leave, requests, approvals and the company directory.', `<span class="t-meta">${setting('people_construction', null)?.on ? 'Under construction' : 'Coming soon'}</span>`)}
       ${appTile('proforma', null, 'chart', 'Proforma Invoice &amp; Quote', 'Prepare quotes and proforma invoices for clients.', '<span class="t-meta">Coming later</span>')}
     </section>
     <footer class="l-foot">${esc(CFG.COMPANY || '')} · ${esc(CFG.MOTTO || '')}<br><span>${esc(CFG.APP_NAME)} v${esc(CFG.VERSION || '')} · <span class="credit">${esc(CREDIT)}</span></span></footer></div>`;

@@ -380,8 +380,8 @@ async function reviewChanges() {
   const byLine = {}; rows.forEach(r => { (byLine[r.it.department_id] ||= []).push(r); });
   return modal({
     title: isAdmin() ? 'Review & apply changes' : 'Review & submit for approval', wide: true, submit: isAdmin() ? 'Apply changes' : 'Send for approval',
-    sub: isAdmin() ? 'Changes in your service lines apply straight away; others go to that line’s admin.' : `Your admin gets ${Object.keys(byLine).length > 1 ? 'one request per service line' : 'these as one request'}.`,
-    body: Object.entries(byLine).map(([d, rs]) => `<h3 class="grp">${esc(lineName(d))}${canAdmin(+d) ? chip('ok', 'applies now') : chip('pending', 'needs approval')}</h3>
+    sub: isAdmin() ? 'Changes in the lines you approve for apply straight away; others go to that line’s main or backup admin.' : `Your admin gets ${Object.keys(byLine).length > 1 ? 'one request per service line' : 'these as one request'}.`,
+    body: Object.entries(byLine).map(([d, rs]) => `<h3 class="grp">${esc(lineName(d))}${canApprove(+d) ? chip('ok', 'applies now') : chip('pending', 'needs approval')}</h3>
       <table class="t"><thead><tr><th>Item</th><th>Location</th><th class="num">Was</th><th class="num">Now</th><th>Reason (optional)</th></tr></thead><tbody>
       ${rs.map(r => `<tr><td>${tag(r.it.code)} ${esc(r.it.name)}</td><td>${esc(locName(r.lid))}</td><td class="num">${fq(r.was)}</td><td class="num"><b>${fq(r.now)}</b></td>
         <td><input type="text" name="r_${r.it.id}_${r.lid}" placeholder="e.g. found in Warri yard"></td></tr>`).join('')}</tbody></table>`).join('') +
@@ -948,7 +948,7 @@ function itemServicePanel(it, svc, log, lastUse, adm) {
 function bindItemExtras(main, c) {
   const it = c.it;
   const A = {
-    price: () => modal({ title: `Price · ${it.code || it.name}`, submit: 'Save price', sub: 'Seen by admins, the Super Admin and Management. Staff never see prices. Every change is in the audit log.',
+    price: () => modal({ title: `Price · ${it.code || it.name}`, submit: 'Save price', sub: 'Seen by admins, the Developer and Management. Staff never see prices. Every change is in the audit log.',
       body: `<div class="row2"><label class="f">Unit price<input type="number" min="0" step="0.01" name="p" value="${c.price ? +c.price.unit_price : ''}" placeholder="Leave empty for no price"></label>
         <label class="f">Currency<select name="cur">${opt('USD', 'USD ($)', c.price?.currency || 'USD')}${opt('NGN', 'NGN (₦)', c.price?.currency)}</select></label></div>`,
       onSubmit: async x => {

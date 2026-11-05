@@ -9,10 +9,12 @@ const qtyFields = P => (P?.parts || []).filter(p => p.kind === 'qty' && p.job_ke
 const PART_KINDS = { qty: ['BHA component', 'A quantity is entered on each job, like the packer or safety joint.'], service: ['Service tool', 'Needed once per tubing size, like the EMST or a retrieving tool.'],
   blank: ['Blank pipe length', 'A new blank length to choose on the job sheet.'], screen: ['Screen size', 'A new screen micron to choose on the job sheet.'] };
 const planCfg = () => setting('planner', {}) || {};
-const canSeePrices = () => ['admin', 'superadmin', 'management'].includes(role());
+const canSeePrices = () => ['admin', 'viewer'].includes(invRole());
 const canEditPlan = () => canAdmin(planCfg().department_id);
 const canEditPrices = () => !readOnly() && isAdmin();
-const isWriter = () => ['staff', 'admin', 'superadmin'].includes(role());
+// 3.0.4: Inventory Viewers (MD, COO) add and edit planned jobs too; turning one into a materials request needs Staff or Admin
+const isWriter = () => !S.viewAs && ['staff', 'admin', 'viewer'].includes(invRole());
+const canRequest = () => !S.viewAs && ['staff', 'admin'].includes(invRole());
 const usd = n => n == null ? '' : '$' + Number(n).toLocaleString('en-US', { minimumFractionDigits: 0, maximumFractionDigits: 0 });
 const partName = p => p.tool + (p.spec && p.spec !== 'Std' ? ' ' + p.spec : '');
 // the parts that came from the Excel tracker (the 20 originals and the 2-3/8" EMST extension rod split out in 2.6.2)
@@ -192,8 +194,8 @@ ROUTES.planner = {
           <td class="nowrap"><b>${esc(j.tubing_size)}</b><div class="sub">${esc(j.setting_tool)}</div></td>
           <td class="sub">${esc(bhaText(j).replace(/ · (EMST|TTS)$/, '').replace(/^(EMST|TTS)$/, '—'))}</td>
           <td class="plchk">${badge}<div class="sub ${eff === 'planned' && !r?.ok ? 'neg' : ''}">${esc(detail)}</div>
-            ${j.mr ? `<div class="sub"><a href="#/job/${j.mr.id}">${esc(j.mr.job_no)}</a> · ${esc((JOB_STATUS[j.mr.status] || [0, j.mr.status])[1])}</div>` : ''}</td>
-          <td class="num nowrap">${isWriter() ? `<div class="btngrp"><button class="btn small" data-edit="${j.id}">${ico('sign')}Edit</button>${!j.mr && eff === 'planned' ? `<button class="btn small" data-mr="${j.id}">${ico('truck')}Request</button>` : ''}${(j.created_by === me || isAdmin()) ? `<button class="btn small" data-del="${j.id}" aria-label="Delete" title="Delete">${ico('trash')}</button>` : ''}</div>` : ''}</td></tr>`; }).join('')
+            ${j.mr ? `<div class="sub"><a href="#/job/${j.mr.id}">${esc(j.mr.job_no)}</a> · ${esc((JOB_STATUS[j.mr.status] || [0, j.mr.status])[1])}</div>` : j.mr_note ? `<div class="sub muted">${esc(j.mr_note)}: make a new request when ready</div>` : ''}</td>
+          <td class="num nowrap">${isWriter() ? `<div class="btngrp"><button class="btn small" data-edit="${j.id}">${ico('sign')}Edit</button>${!j.mr && eff === 'planned' && canRequest() ? `<button class="btn small" data-mr="${j.id}">${ico('truck')}Request</button>` : ''}${(j.created_by === me || isAdmin()) ? `<button class="btn small" data-del="${j.id}" aria-label="Delete" title="Delete">${ico('trash')}</button>` : ''}</div>` : ''}</td></tr>`; }).join('')
         : `<tr><td colspan="6" class="empty">${PL.view === 'active' ? 'No upcoming jobs. Press <b>Add upcoming job</b> to check one against the shelf.' : 'Nothing here.'}</td></tr>`}</tbody></table></div></section>`;
   },
   summary(P, E) {

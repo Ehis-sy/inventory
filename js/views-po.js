@@ -5,9 +5,10 @@ const PO_STATUS = { draft: ['muted', 'Draft'], issued: ['out', 'Issued'], partia
 const PO_SRC = { blank: 'Typed in', quote: 'From a supplier quote', planner: 'From the Job planner', import: 'Old PO added by hand' };
 const poFull = o => o?.po_no ? (o.revision ? `${o.po_no}-R${o.revision}` : o.po_no) : null;
 const poMyApps = () => S.profile?.apps || [];
-const poCanView = () => isSuper() || poMyApps().includes('po');
-const poCanRaise = () => !readOnly() && ['staff', 'admin', 'superadmin'].includes(role()) && (isSuper() || poMyApps().includes('po'));
-const poOwner = o => isSuper() || (o && o.created_by === S.profile?.id);
+const poCanView = () => !!appRole('po');
+// 3.0.4: everyone in PO is Staff (raise and manage their own, no approval) or Viewer (look and download)
+const poCanRaise = () => !S.viewAs && appRole('po') === 'staff';
+const poOwner = o => isSuper() || (appRole('po') === 'staff' && !!o && o.created_by === S.profile?.id);
 const poStatusChip = o => chip(PO_STATUS[o.status]?.[0] || 'muted', PO_STATUS[o.status]?.[1] || o.status) + (o.revising ? ' ' + chip('pending', `R${o.revision + 1} being prepared`) : '') + (o.is_import ? ' ' + chip('muted', 'Added by hand') : '');
 const poLineName = id => S.po.lines.find(l => l.id === +id)?.name || '—';
 const poLineCode = id => S.po.lines.find(l => l.id === +id)?.code || '';
@@ -68,7 +69,7 @@ async function poLookups(force) {
 // ---------------------------------------------------------------- shell: menu and phone bar for the PO app
 function poNav() {
   const main = [['po/overview', 'Overview', 'chart'], ['po', 'Purchase orders', 'audit'], ...(poCanRaise() ? [['po/new', 'New purchase order', 'plus']] : []), ['po/suppliers', 'Suppliers', 'users']];
-  const setup = [...(isSuper() ? [['po/settings', 'PO settings', 'gear']] : []), ...(isAdmin() ? [['team', 'Nest admin', 'users']] : [])];
+  const setup = [...(isSuper() ? [['po/settings', 'PO settings', 'gear'], ['team', 'Nest admin', 'users']] : [])];
   return { main, setup };
 }
 function poBottomBar() {
@@ -91,7 +92,7 @@ async function poTileMeta(el) {
 // ---------------------------------------------------------------- router
 ROUTES.po = {
   async load(parts, params) {
-    if (!poCanView()) return topbar('Purchase Order') + `<div class="notice">You don’t have access to the Purchase Order app yet. Ask the Super Admin to switch it on for you on the Team page.</div><a class="btn" href="#/">Back to Nest home</a>`;
+    if (!poCanView()) return topbar('Purchase Order') + `<div class="notice">You don’t have access to the Purchase Order app yet. Ask the Developer to switch it on for you on the Team page.</div><a class="btn" href="#/">Back to Nest home</a>`;
     await poLookups();
     const p1 = parts[1];
     this.mode = !p1 ? 'list' : p1 === 'new' ? 'edit' : p1 === 'suppliers' ? 'suppliers' : p1 === 'settings' ? 'settings' : p1 === 'overview' ? 'overview' : parts[2] === 'edit' ? 'edit' : 'view';
@@ -247,7 +248,7 @@ const poEditor = {
     if (id) {
       o = await q(sb.from('po_orders').select('*').eq('id', id).maybeSingle());
       if (!o) return topbar('Purchase order') + '<div class="notice bad">Purchase order not found.</div>';
-      if (!poOwner(o)) return topbar(esc(poFull(o) || 'Draft purchase order')) + `<div class="notice">Only ${esc(o.created_by_name || 'the person who raised it')} or the Super Admin can change this PO. <a href="#/po/${o.id}">Open it</a></div>`;
+      if (!poOwner(o)) return topbar(esc(poFull(o) || 'Draft purchase order')) + `<div class="notice">Only ${esc(o.created_by_name || 'the person who raised it')} or the Developer can change this PO. <a href="#/po/${o.id}">Open it</a></div>`;
       if (o.status !== 'draft' && !o.revising) { setTimeout(() => go('#/po/' + id), 0); return '<div class="loading">Opening…</div>'; }
       lines = await q(sb.from('po_order_lines').select('*').eq('po_id', id).order('sort').order('id'));
       files = await q(sb.from('po_files').select('id,kind,name,mime,size,added_by_name,added_at').eq('po_id', id).order('added_at'));
@@ -846,7 +847,8 @@ const poView = {
       ${recs.length ? `<section class="panel"><header><h2>Received</h2><span class="meta">${plural(recs.length, 'delivery', 'deliveries')}</span></header><div class="tablewrap"><table class="t stack"><thead><tr><th>When</th><th>Item</th><th class="num">Qty</th><th>Put in</th><th>Received by</th><th>Note</th></tr></thead><tbody>
         ${recs.map(r => { const l = lines.find(x => x.id === r.line_id); return `<tr><td class="nowrap">${fdt(r.received_at)}</td><td class="full">${esc(l ? (l.part_no ? l.part_no + ' · ' : '') + (l.description || '') : 'Line removed')}</td><td class="num">${fq(r.qty)}</td><td>${r.location_id ? esc(locName(r.location_id)) : '<span class="sub">Not in Inventory</span>'}</td><td>${esc(r.received_by_name || '')}</td><td class="sub">${esc(r.note || '')}</td></tr>`; }).join('')}</tbody></table></div></section>` : ''}
       <section class="panel"><header><h2>Files</h2></header><div class="body">${files.length ? `<ul class="list po-files">${files.map(f => `<li><div class="pf-name">${ico('pdf')}<a href="#" data-dl="${f.id}">${esc(f.name)}</a> <span class="sub">${f.kind === 'original' ? 'Original PO · ' : f.kind === 'quote' ? 'Supplier’s quote · ' : ''}${fbytes(f.size)} · ${esc(f.added_by_name || '')} · ${fdt(f.added_at)}</span></div></li>`).join('')}</ul>` : '<div class="muted">No files attached.</div>'}</div></section>
-      ${own && ['issued', 'partial'].includes(o.status) && !recs.length && !o.revising ? `<div class="po-danger"><button class="btn small link danger" id="pv-cancel">Cancel this PO</button><span class="sub">Cancelled POs keep their number; it’s never reused.</span></div>` : ''}`;
+      ${own && ['issued', 'partial'].includes(o.status) && !recs.length && !o.revising ? `<div class="po-danger"><button class="btn small link danger" id="pv-cancel">Cancel this PO</button><span class="sub">Cancelled POs keep their number; it’s never reused.</span></div>` : ''}
+      ${isSuper() && !S.viewAs ? `<div class="po-danger dev"><button class="btn small link danger" id="pv-devdel">${ico('wrench')}Delete this PO</button><span class="sub">Developer only. Removes it from every list${recs.length ? ' and takes the goods received against it off stock' : ''}. A full copy stays in the audit log.</span></div>` : ''}`;
   },
   async docFor(revId) {
     const r = await q(sb.from('po_revisions').select('*').eq('id', revId).single());
@@ -879,6 +881,9 @@ const poView = {
       body: `${o.status !== 'received' ? '<div class="notice">Some goods haven’t been received yet. Closing means you don’t expect them any more.</div>' : ''}<label class="f">Why is it closed?<textarea name="reason" rows="2" required></textarea></label>`,
       onSubmit: async x => { if (!(x.reason || '').trim()) throw new Error('Say why the PO is closed.'); await q(sb.rpc('po_close', { p_id: o.id, p_reason: x.reason })); toast('PO closed'); render({ quiet: true }); } });
     const cmp = $('#pv-cmp', main); if (cmp) cmp.onclick = () => poCompare(this.revs, o);
+    const dd = $('#pv-devdel', main); if (dd) dd.onclick = () => devConfirm({ title: `Delete ${poFull(o) || 'this draft'}`, expect: o.po_no || 'Draft ' + o.id,
+      sub: `Removes the PO, its revisions${this.recs.length ? ', and the goods received against it (they come off stock)' : ''}. The number is not reused.`,
+      run: async c => { await q(sb.rpc('dev_delete_po', { p_id: o.id, p_confirm: c })); toast('PO deleted'); go('#/po'); } });
   }
 };
 function poCanReceiveLine(l, o) {
@@ -886,8 +891,8 @@ function poCanReceiveLine(l, o) {
   if (!l.item_id && o.created_by === S.profile?.id) return true;
   const it = l.item_id ? S.items?.find(x => x.id === +l.item_id) : null;
   const d = it ? it.department_id : o.department_id;
-  if (d == null) return isAdmin();
-  if (canAdmin(d)) return true;
+  if (d == null) return invRole() === 'admin';
+  if (canApprove(d)) return true;
   return S.members.some(m => m.profile_id === S.profile.id && m.department_id === +d && m.po_receive);
 }
 async function poReceiveDialog(o, lines) {
@@ -1159,10 +1164,10 @@ const poSuppliersView = {
   }
 };
 
-// ================================================================ PO SETTINGS (Super Admin)
+// ================================================================ PO SETTINGS (Developer)
 const poSettingsView = {
   async load() {
-    if (!isSuper()) return topbar('PO settings') + '<div class="notice">Only the Super Admin can change the PO settings.</div>';
+    if (!isSuper()) return topbar('PO settings') + '<div class="notice">Only the Developer can change the PO settings.</div>';
     await loadLookups();
     const nxt = (setting('po_counter', {}) || {}).next;
     return topbar('PO settings', 'Numbering for purchase orders.') +

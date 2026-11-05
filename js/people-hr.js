@@ -305,7 +305,7 @@ function hrPreviewOrg(rows) {
 const HR_TABS = [['org', 'Organisation'], ['lists', 'Lists'], ['fields', 'Custom fields'], ['leave', 'Leave types'], ['holidays', 'Public holidays'], ['flows', 'Approvals'], ['empno', 'Employee numbers'], ['roles', 'HR team'], ['log', 'Activity log']];
 const HR_TAB_DESC = { org: () => `${plural(S.hr.units.length, 'unit')} · ${plural(S.hr.positions.length, 'position')} · who reports to whom`, lists: () => 'Grades, work locations and employment types',
   fields: () => 'Extra details HR keeps on each record', leave: () => 'Leave types and days per grade', holidays: () => 'Not counted as leave days', flows: () => 'Who approves each kind of request, in order',
-  empno: () => 'How new employee numbers are made', roles: () => `${plural((S.hr.roles || []).length, 'person', 'people')} besides the Super Admin`, log: () => 'Every change made in PeopleCore' };
+  empno: () => 'How new employee numbers are made', roles: () => `${plural((S.hr.roles || []).length, 'person', 'people')} besides the Developer`, log: () => 'Every change made in PeopleCore' };
 // 3.0.3: one bar per section; opening one closes the others
 const hrSettingsPage = {
   async load(parts, params) {
@@ -500,8 +500,8 @@ function hrSetRoles() {
   const cand = Object.values(S.people).filter(p => !taken.has(p.id) && !['pending', 'disabled'].includes(p.role)).sort((a, b) => (a.full_name || a.email).localeCompare(b.full_name || b.email));
   return `<section class="panel"><header><h2>HR team</h2><span class="meta">Who can see and manage staff records</span></header>
     <div class="body muted"><b>HR admins</b> see and change everything, including the locked section and these settings. <b>HR officers</b> see and update staff records and approve HR steps, but not the locked section.
-      ${realSuper() ? 'You (Super Admin) are always an HR admin.' : 'Only the Super Admin can add HR admins.'}</div>
-    <ul class="list">${rows.map(r => `<li><div style="flex:1"><div class="name">${esc(r.p.full_name || r.p.email)}</div><div class="sub">${esc(r.p.email || '')}${r.fixed ? ' · Super Admin' : r.by ? ` · added by ${esc(r.by)} ${fd(r.at)}` : ''}</div></div>
+      ${realSuper() ? 'You (Developer) are always an HR admin.' : 'Only the Developer can add HR admins.'}</div>
+    <ul class="list">${rows.map(r => `<li><div style="flex:1"><div class="name">${esc(r.p.full_name || r.p.email)}</div><div class="sub">${esc(r.p.email || '')}${r.fixed ? ' · Developer' : r.by ? ` · added by ${esc(r.by)} ${fd(r.at)}` : ''}</div></div>
       <div class="end">${chip(r.role === 'hr_admin' ? 'out' : 'reserved', r.role === 'hr_admin' ? 'HR admin' : 'HR officer')}${!r.fixed && (realSuper() || r.role === 'hr_officer') ? ` <button class="btn small" data-rr="${r.p.id}">Remove</button>` : ''}</div></li>`).join('')}</ul>
     <form class="body hr-addrow" id="radd"><select name="pid"><option value="">Add someone…</option>${cand.map(p => opt(p.id, (p.full_name || p.email) + ' · ' + p.email, '')).join('')}</select>
       <select name="role">${opt('hr_officer', 'HR officer', '')}${realSuper() ? opt('hr_admin', 'HR admin', '') : ''}</select><button class="btn small primary" type="submit">${ico('plus')}Add</button></form></section>`;
