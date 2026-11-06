@@ -91,7 +91,8 @@ function peopleNav() {
     if (m) return { top, main: [['people/admin', 'All modules', 'grid'], ...m.menu.filter(x => !x[3] || pcCan(x[3])).map(([k, l, i]) => ['people/admin/' + S.pc.mod + (k ? '/' + k : ''), l, i ?? null])], setup: [], setupLabel: m.name, modName: m.name };
     return { top, main: [['people/admin', 'Home', 'home'], ...Object.entries(PC_MODS).filter(([k]) => pcModOk(k)).map(([k, x]) => ['people/admin/' + k, x.name, x.icon])], setup: [] };
   }
-  const inWork = /^people\/work/.test(S.hr.navKey || '');
+  // Work opens its list; pressing Work again closes it (3.0.4)
+  const inWork = /^people\/work/.test(S.hr.navKey || '') && !S.pc.workShut;
   const main = [['people', 'Discover', 'compass'], ['people/me', 'My profile', 'user'], ['people/work', 'Work', 'kit'],
     ...(inWork ? HR_WORK.map(([k, l]) => ['people/work/' + k, l, null]) : []),
     ['people/pay', 'Pay', 'pay'], ['people/approvals', 'Approvals', 'check'], ['people/company', 'Company', 'building']];
@@ -108,7 +109,7 @@ function peopleBottomBar() {
 }
 function peopleReshell(navKey) {
   S.hr.navKey = navKey;
-  const sig = [S.pc.view, S.pc.mod, pcViews().map(v => v[0]).join(','), S.hr.appr.length, /^people\/work/.test(navKey), S.viewAs?.role || ''].join('|');
+  const sig = [S.pc.view, S.pc.mod, pcViews().map(v => v[0]).join(','), S.hr.appr.length, /^people\/work/.test(navKey), !!S.pc.workShut, S.viewAs?.role || ''].join('|');
   if (sig === S.hr.navSig) return;
   S.hr.navSig = sig; S.shellReady = false; shell(); setNav(navKey);
   const a = $(`.nav [data-r="people/approvals"]`) || $(`.nav [data-r="people/sup/approvals"]`);
@@ -432,3 +433,13 @@ PC_SYS.roles = {
       await pcTry(() => q(sb.rpc('hr_admin_role_delete', { p_id: this.r.id })), 'Deleted'); pcInvalidate(); go('#/people/system/roles'); };
   }
 };
+
+// Work in the PeopleCore menu: a second press closes its list
+document.addEventListener('click', e => {
+  const a = e.target.closest('.nav a[data-r="people/work"], .pc-phonenav a[href="#/people/work"]'); if (!a || S.shellApp !== 'people') return;
+  const open = /^people\/work/.test(S.hr.navKey || '') && !S.pc.workShut;
+  if (open) { e.preventDefault(); S.pc.workShut = true; }
+  else { S.pc.workShut = false; if (location.hash !== '#/people/work') return; e.preventDefault(); }
+  S.hr.navSig = ''; peopleReshell(S.hr.navKey);
+  if (window.matchMedia('(max-width: 760px)').matches) render({ quiet: true });
+}, true);

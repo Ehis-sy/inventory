@@ -549,6 +549,37 @@ function renderPending() {
 
 // ---------------------------------------------------------------- shell
 // Report sign-off: can I sign it at its current step?
+// 3.0.4: your photo at the top right of every page. It opens a menu, as in SeamlessHR: Profile, Account settings, Sign out.
+const meInitials = p => { const n = (p.first_name ? p.first_name + ' ' + (p.last_name || '') : p.full_name || p.email || '?').trim().split(/\s+/); return ((n[0] || '?')[0] + (n.length > 1 ? n[n.length - 1][0] : '')).toUpperCase(); };
+const meAv = (p, cls = '') => `<span class="me-av ${cls}">${p.photo ? `<img src="${esc(p.photo)}" alt="">` : `<b>${esc(meInitials(p))}</b>`}</span>`;
+const meProfileHref = () => appAllowed('people') && !peopleBuilding() ? '#/people/me' : '#/account';
+const meRoleLine = () => S.shellApp === 'people' ? (S.profile.job_title || 'Staff') : myRoleLabel() + (S.shellApp !== 'po' && S.shellApp !== 'admin' && !isSuper() && !isMgmt() && myAccessLabel() ? ' · ' + myAccessLabel() : '');
+function meBtn(cls = '') {
+  const p = S.profile; if (!p) return '';
+  return `<button class="me-btn ${cls}" id="mebtn" aria-label="Your profile and account" aria-haspopup="menu">${meAv(p)}${p.photo ? '' : '<i class="me-dot" title="Add your photo"></i>'}</button>`;
+}
+function bindMeBtn(root = document) {
+  const b = $('#mebtn', root); if (!b) return;
+  b.onclick = e => { e.stopPropagation(); const open = $('.me-menu'); if (open) { open.remove(); return; } openMeMenu(b); };
+}
+function openMeMenu(btn) {
+  const p = S.profile; const r = btn.getBoundingClientRect();
+  const m = document.createElement('div'); m.className = 'me-menu'; m.setAttribute('role', 'menu');
+  m.style.top = Math.round(r.bottom + 8) + 'px'; m.style.right = Math.max(8, Math.round(window.innerWidth - r.right)) + 'px';
+  m.innerHTML = `<div class="me-head">${meAv(p, 'lg')}<div><b>${esc(p.full_name || p.email)}</b><div class="sub">${esc(p.job_title || '')}</div><div class="sub">${esc(meRoleLine())}</div></div></div>
+    ${p.photo ? '' : '<a href="#/account" class="me-hint" role="menuitem">Add your photo</a>'}
+    <a href="${meProfileHref()}" role="menuitem">${ico('user')}Profile</a>
+    <a href="#/account" role="menuitem">${ico('gear')}Account settings<span class="sub">Photo, signature, password, alerts</span></a>
+    <button type="button" role="menuitem" data-out>${ico('out')}Sign out</button>`;
+  document.body.appendChild(m);
+  const close = () => { m.remove(); document.removeEventListener('click', away, true); document.removeEventListener('keydown', esc_); window.removeEventListener('hashchange', close); };
+  const away = e => { if (!m.contains(e.target) && !btn.contains(e.target)) close(); };
+  const esc_ = e => { if (e.key === 'Escape') close(); };
+  setTimeout(() => { document.addEventListener('click', away, true); document.addEventListener('keydown', esc_); window.addEventListener('hashchange', close); }, 0);
+  $$('a', m).forEach(a => a.addEventListener('click', () => setTimeout(close, 0)));
+  $('[data-out]', m).onclick = () => { close(); sb.auth.signOut(); };
+}
+
 function canSignReport(r) {
   const me = S.viewAs ? null : S.profile.id;
   if (r.status === 'review') return !isSuper() && isAdmin() && r.department_id != null && canApprove(r.department_id) && r.prepared_by !== me;
@@ -585,12 +616,13 @@ function shell() {
       <nav class="nav">${top || ''}${main.map(link).join('')}
         ${setup.length ? `<div class="nav-group">${S.shellApp === 'admin' ? 'Apps' : navItems().setupLabel || 'Setup'}</div>${setup.map(link).join('')}` : ''}</nav>
       <div class="side-foot">${CFG.TAGLINE ? `<div class="motto">${esc(CFG.TAGLINE)}</div>` : ''}
-        <a class="who" href="#/account">${p.photo ? `<img class="who-ph" src="${esc(p.photo)}" alt="">` : ''}${esc(p.full_name || p.email)}</a><div class="role">${S.shellApp === 'people' && typeof hrRole === 'function' ? esc(hrRole() === 'hr_admin' ? 'HR admin' : hrRole() === 'hr_officer' ? 'HR officer' : S.hr?.me?.card?.title || ROLE_LABEL[role()]) : esc(myRoleLabel()) + (S.shellApp !== 'po' && S.shellApp !== 'admin' && !isSuper() && !isMgmt() ? ' · ' + esc(myAccessLabel() || 'no Inventory access') : '')}</div>
+
         ${realSuper() && S.shellApp !== 'people' ? `<button class="btn small viewas-btn" id="viewas">${S.viewAs ? 'Change view' : 'View as…'}</button>` : ''}
-        <a href="#" id="signout">Sign out</a></div>
+      </div>
     </aside>${viewAsBar()}
     <main id="main"></main>
     <button class="bell" id="bell" aria-label="Notifications">${ico('bell')}<span class="bell-count" hidden></span></button>
+    ${meBtn()}
     ${S.shellApp === 'po' && typeof poBottomBar === 'function' ? poBottomBar() : S.shellApp === 'people' && !peopleBuilding() && typeof peopleBottomBar === 'function' ? peopleBottomBar() : S.shellApp === 'admin' ? `<nav class="bottombar">
       ${isSuper() ? `<a href="#/team" data-r="team">${ico('users')}Team</a><a href="#/devtools" data-r="devtools">${ico('wrench')}Tools</a><a href="#/settings" data-r="settings">${ico('gear')}Settings</a>` : ''}
       <a href="#/account" data-r="account">${ico('user')}Account</a><a href="#/" data-r="home">${ico('grid')}Apps</a></nav>` : `<nav class="bottombar">
@@ -600,8 +632,7 @@ function shell() {
       <a href="#/jobs" data-r="jobs">${ico('truck')}Requests</a>
       <a href="#/more" data-r="more">${ico('more')}More</a>
     </nav>`}</div>`;
-  $('#signout').onclick = e => { e.preventDefault(); sb.auth.signOut(); };
-  $('#bell').onclick = openBell;
+  $('#bell').onclick = openBell; bindMeBtn();
   const va = $('#viewas'); if (va) va.onclick = openViewAs; bindViewAs();
   $$('#invmode button').forEach(b => b.onclick = () => { S.invMy = b.dataset.m === 'my'; try { localStorage.setItem('nest.invMy', S.invMy ? '1' : '0'); } catch (e) { } S.shellReady = false; S.inv.edit = false; S.inv.changes.clear(); render(); });
   document.body.classList.toggle('viewing-as', !!(S.viewAs && realSuper()));
@@ -716,7 +747,7 @@ async function renderLauncher() {
   $('#app').innerHTML = `${viewAsBar()}<div class="launcher">${typeof maintBars === 'function' ? maintBars('launcher') : ''}
     <header class="l-top"><a class="brand" href="#/"><img src="brand/mark-96.png" alt=""><span class="brand-name">${wordmark()}<small>Nest</small></span></a>
       <div class="l-right">${isSuper() ? `<a class="btn small ghost" href="#/team">${ico('gear')}Nest admin</a>` : ''}${realSuper() ? `<button class="btn small ghost" id="viewas">${S.viewAs ? 'Change view' : 'View as…'}</button>` : ''}<button class="bell inline" id="bell" aria-label="Notifications">${ico('bell')}<span class="bell-count" hidden></span></button>
-      <a class="btn small ghost" href="#/account">${esc(p.full_name || p.email)}</a><button class="btn small ghost" id="out">Sign out</button></div></header>
+      ${meBtn('inline')}</div></header>
     <section class="l-hero"><img class="l-mark" src="brand/mark.png" alt="">
       <div><div class="l-tag">${esc(CFG.TAGLINE || '')}</div><h1>${first ? `Welcome back, ${esc(first)}` : 'Welcome'}</h1>
       <p>Where would you like to go?</p></div></section>
@@ -730,7 +761,7 @@ async function renderLauncher() {
       ${appTile('proforma', null, 'chart', 'Proforma Invoice &amp; Quote', 'Prepare quotes and proforma invoices for clients.', '<span class="t-meta">Coming later</span>')}
     </section>
     <footer class="l-foot">${esc(CFG.COMPANY || '')} · ${esc(CFG.MOTTO || '')}<br><span>${esc(CFG.APP_NAME)} v${esc(CFG.VERSION || '')} · <span class="credit">${esc(CREDIT)}</span></span></footer></div>`;
-  $('#out').onclick = () => sb.auth.signOut(); $('#bell').onclick = openBell;
+  $('#bell').onclick = openBell; bindMeBtn();
   if (typeof bindMaintBars === 'function') bindMaintBars($('#app'));
   const va = $('#viewas'); if (va) va.onclick = openViewAs; bindViewAs();
   document.body.classList.toggle('viewing-as', !!(S.viewAs && realSuper()));

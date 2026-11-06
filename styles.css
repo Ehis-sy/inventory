@@ -1570,3 +1570,26 @@ select.mini, select.inline.mini { min-width: 0; width: 96px; padding: 3px 24px 3
 .pc-avcam svg { width: 15px; height: 15px; }
 @media (max-width: 760px) { .auth .row2 { grid-template-columns: 1fr; } }
 .optl { color: var(--muted); font-weight: 400; }
+
+/* 3.0.4: your photo at the top right, with its menu */
+main { padding-right: 136px; }
+.bell { right: 72px; }
+.me-btn { position: fixed; top: 16px; right: 20px; z-index: 30; width: 42px; height: 42px; padding: 0; border-radius: 50%; border: 2px solid #fff; background: var(--gunmetal); cursor: pointer; box-shadow: 0 6px 18px -8px rgba(0,0,0,.35), 0 0 0 1px var(--line); }
+.me-btn.inline { position: relative; top: auto; right: auto; border-color: rgba(255,255,255,.35); box-shadow: none; }
+.me-btn .me-dot { position: absolute; top: -1px; right: -1px; width: 11px; height: 11px; border-radius: 50%; background: var(--flame); border: 2px solid #fff; }
+.me-av { display: grid; place-items: center; width: 100%; height: 100%; border-radius: 50%; overflow: hidden; background: var(--gunmetal); color: #fff; font-weight: 700; font-size: 14px; letter-spacing: .02em; }
+.me-av img { width: 100%; height: 100%; object-fit: cover; }
+.me-av.lg { width: 52px; height: 52px; flex: none; font-size: 18px; }
+.me-menu { position: fixed; z-index: 45; width: 290px; background: #fff; border: 1px solid var(--line); border-radius: 14px; box-shadow: 0 22px 50px -12px rgba(20,22,26,.3); overflow: hidden; animation: memenu .14s ease-out; }
+@keyframes memenu { from { opacity: 0; transform: translateY(-6px); } to { opacity: 1; transform: none; } }
+.me-head { display: flex; gap: 12px; align-items: center; padding: 16px; border-bottom: 1px solid #EEF0F1; }
+.me-head b { display: block; line-height: 1.25; } .me-head .sub { font-size: 12.5px; }
+.me-menu > a, .me-menu > button { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; width: 100%; padding: 12px 16px; border: 0; background: none; text-align: left; font: inherit; color: var(--ink); text-decoration: none; cursor: pointer; }
+.me-menu > a:hover, .me-menu > button:hover { background: #F5F6F7; }
+.me-menu > a svg, .me-menu > button svg { width: 18px; height: 18px; color: var(--muted); }
+.me-menu > a .sub { flex-basis: 100%; padding-left: 28px; margin-top: -4px; font-size: 12px; }
+.me-menu > button[data-out] { border-top: 1px solid #EEF0F1; color: var(--bad); } .me-menu > button[data-out] svg { color: var(--bad); }
+.me-menu .me-hint { background: #FFF4D6; color: #8A5A00; font-weight: 600; font-size: 13px; padding: 9px 16px; }
+body.viewing-as .me-btn { top: 54px; }
+@media (max-width: 760px) { main { padding-right: 14px; } .bell { right: 62px; } .me-btn { top: 10px; right: 12px; } }
+@media print { .me-btn, .me-menu { display: none !important; } main { padding: 0 !important; } }
