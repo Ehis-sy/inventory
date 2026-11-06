@@ -639,10 +639,12 @@ ROUTES.account = {
     return topbar('My account') + `<div class="cols"><section class="panel"><header><h2>Profile</h2></header><form class="body" id="prof">
         <div class="setup-photo"><span class="setup-av" id="acc-av">${p.photo ? `<img src="${esc(p.photo)}" alt="">` : `<b>${esc(((p.first_name || p.full_name || p.email || '?')[0] || '?').toUpperCase())}</b>`}</span>
           <div><b>Your photo</b><div class="sub">Shows in Nest and PeopleCore.</div><label class="btn small filebtn mt">${ico('up')}${p.photo ? 'Change photo' : 'Add a photo'}<input type="file" accept="image/*" id="acc-ph" hidden></label></div></div>
-        <div class="row2"><label class="f">First name<input type="text" name="first" value="${esc(p.first_name || '')}" required></label><label class="f">Surname<input type="text" name="last" value="${esc(p.last_name || '')}" required></label></div>
-        <label class="f">Phone <span class="optl">(optional)</span><input type="tel" name="phone" value="${esc(p.phone || '')}"></label>
+        ${p.hr_linked ? `<dl class="kv"><dt>Name</dt><dd>${esc(p.full_name || '')}</dd><dt>Phone</dt><dd>${esc(p.phone || '—')}</dd></dl>
+          <div class="notice">Your name and phone come from your PeopleCore profile. ${appAllowed('people') && !peopleBuilding() ? '<a href="#/people/me">Change them in PeopleCore → My profile</a>; HR approves the change.' : 'HR keeps them on your PeopleCore record.'}</div>`
+        : `<div class="row2"><label class="f">First name<input type="text" name="first" value="${esc(p.first_name || '')}" required></label><label class="f">Surname<input type="text" name="last" value="${esc(p.last_name || '')}" required></label></div>
+        <label class="f">Phone <span class="optl">(optional)</span><input type="tel" name="phone" value="${esc(p.phone || '')}"></label>`}
         <dl class="kv"><dt>Email</dt><dd>${esc(p.email)}</dd><dt>Job title</dt><dd>${p.job_title ? esc(p.job_title) : '<span class="sub">Not set yet</span>'}<div class="sub">Set by the Developer. It’s printed under your name when you sign.</div></dd><dt>Access</dt><dd>${ROLE_LABEL[p.role]}</dd><dt>Inventory access</dt><dd>${isSuper() ? 'Everything' : esc(myAccessLabel() || 'None yet')}</dd></dl>
-        <button class="btn primary mt" type="submit">Save</button></form></section>
+        ${p.hr_linked ? '' : '<button class="btn primary mt" type="submit">Save</button>'}</form></section>
       <section class="panel"><header><h2>Change password</h2></header><form class="body" id="pw">
         <label class="f">New password<span class="hint">At least 8 characters.</span><input type="password" name="pw" minlength="8" autocomplete="new-password" required></label>
         <button class="btn primary" type="submit">Change password</button></form></section></div>
@@ -660,7 +662,7 @@ ROUTES.account = {
     bindMyAlerts(main);
     const reload = async () => { S.profile = await q(sb.from('profiles').select('*').eq('id', S.profile.id).maybeSingle()); await loadLookups(); S.shellReady = false; render({ quiet: true }); };
     $('#acc-ph', main).onchange = async e => { try { const ph = await hrPhotoData(e.target.files[0]); await q(sb.rpc('my_profile_save', { p: { photo: ph } })); toast('Photo saved'); if (typeof pcInvalidate === 'function') pcInvalidate(); await reload(); } catch (ex) { toast(niceError(ex), true); } };
-    $('#prof', main).onsubmit = async e => {
+    if (!S.profile.hr_linked) $('#prof', main).onsubmit = async e => {
       e.preventDefault(); const d = Object.fromEntries(new FormData(e.target));
       try { await q(sb.rpc('my_profile_save', { p: { first_name: d.first, last_name: d.last, phone: d.phone || '' } }));
         await sb.auth.updateUser({ data: { full_name: `${d.first.trim()} ${d.last.trim()}` } }); toast('Saved'); await reload(); } catch (ex) { toast(niceError(ex), true); }

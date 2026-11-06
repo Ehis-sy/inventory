@@ -297,8 +297,9 @@ function renderSetup() {
     <div class="setup-photo"><span class="setup-av">${p.photo ? `<img src="${esc(p.photo)}" alt="">` : `<b>${esc(((p.first_name || p.full_name || p.email || '?')[0] || '?').toUpperCase())}</b>`}</span>
       <div><b>Your photo</b><div class="sub">A clear photo of your face. It shows in Nest and PeopleCore.</div>
       <label class="btn small filebtn mt">${ico('up')}${p.photo ? 'Change photo' : 'Take or choose a photo'}<input type="file" accept="image/*" id="ph" hidden></label></div></div>
-    <div class="row2"><label class="f">First name<input type="text" name="first" value="${esc(p.first_name || '')}" required></label><label class="f">Surname<input type="text" name="last" value="${esc(p.last_name || '')}" required></label></div>
-    <div class="row2"><label class="f">Phone <span class="optl">(optional)</span><input type="tel" name="phone" value="${esc(p.phone || '')}"></label>
+    ${p.hr_linked ? `<div class="f">Name<div class="sub" style="padding-top:6px"><b>${esc(p.full_name || '')}</b> · from your PeopleCore record</div></div><div class="row2"><div class="f">Phone<div class="sub" style="padding-top:8px">${esc(p.phone || '—')}</div></div>`
+      : `<div class="row2"><label class="f">First name<input type="text" name="first" value="${esc(p.first_name || '')}" required></label><label class="f">Surname<input type="text" name="last" value="${esc(p.last_name || '')}" required></label></div>
+    <div class="row2"><label class="f">Phone <span class="optl">(optional)</span><input type="tel" name="phone" value="${esc(p.phone || '')}"></label>`}
       ${p.job_title ? `<div class="f">Job title<div class="sub" style="padding-top:8px">${esc(p.job_title)}</div></div>` : '<label class="f">Job title<input type="text" name="title" placeholder="e.g. Slickline Operator"></label>'}</div>
     <div class="f"><b>Your signature</b>${p.signature_id ? ' <span class="chip ok">Added</span><div class="sub">You already have one. Draw or upload a new one only if you want to replace it.</div>' : ''}${sigPickerHtml()}</div>
     <button class="btn primary" type="submit">Save and continue</button>
@@ -311,11 +312,11 @@ function renderSetup() {
     e.preventDefault(); err.hidden = true; const b = $('button[type=submit]', f); const d = Object.fromEntries(new FormData(f));
     const sg = sig.value();
     try {
-      if (!(d.first || '').trim() || !(d.last || '').trim()) throw new Error('Enter your first name and surname.');
+      if (!p.hr_linked && (!(d.first || '').trim() || !(d.last || '').trim())) throw new Error('Enter your first name and surname.');
       if (!photo && !p.photo) throw new Error('Add your photo, or press Skip for now and add it later.');
       if (!sg && !p.signature_id) throw new Error(sig.mode() === 'draw' ? 'Sign in the box, or press Skip for now and add it later.' : 'Choose a photo of your signature, or press Skip for now.');
       b.disabled = true;
-      const body = { first_name: d.first.trim(), last_name: d.last.trim(), phone: d.phone || '' };
+      const body = p.hr_linked ? {} : { first_name: d.first.trim(), last_name: d.last.trim(), phone: d.phone || '' };
       if (photo) body.photo = photo; if (d.title) body.job_title = d.title;
       await q(sb.rpc('my_profile_save', { p: body }));
       if (sg) await q(sb.rpc('save_signature', { p_image: sg }));

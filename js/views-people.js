@@ -282,7 +282,7 @@ function hrChangeRequest(me) {
   return modal({
     title: 'Request a change', wide: true, submit: 'Send to HR',
     sub: 'Change what’s wrong or out of date. HR checks it, then your record is updated. Your name, position and dates can only be changed by HR.',
-    body: `<div class="hr-photo-pick">${hrAv(me.card, 'lg')}<label class="btn small filebtn">${ico('up')}New photo<input type="file" accept="image/*" id="ph" hidden></label><span class="sub" id="phs"></span></div>
+    body: `<p class="sub">To change your photo, use the camera button on your picture: it saves straight away. Your name and phone here also update your Nest account once HR approves.</p>
       <div class="row3"><label class="f">Title<select name="title"><option value=""></option>${TITLES.map(t => opt(t, t, me.title)).join('')}</select></label>
         <label class="f">Preferred name<input name="preferred_name" value="${esc(me.preferred_name || '')}"></label>
         <label class="f">Marital status<select name="marital_status"><option value=""></option>${MARITAL.map(t => opt(t, t, me.marital_status)).join('')}</select></label></div>
@@ -293,7 +293,6 @@ function hrChangeRequest(me) {
       <details class="hr-lockbox"><summary>${ico('lock')}Bank, tax &amp; pension details <span class="sub">· changes here go to HR admins only</span></summary>
         <div class="row2">${HR_PRIVATE.map(([k, l]) => `<label class="f">${esc(l)}<input name="p_${k}" value="${esc(pv[k] || '')}" autocomplete="off"></label>`).join('')}</div></details>
       <label class="f">Note for HR <span class="hint">Optional</span><input name="note" placeholder="e.g. I moved house in October"></label>`,
-    onOpen: d => { $('#ph', d).onchange = async e => { try { photo = await hrPhotoData(e.target.files[0]); $('.hr-photo-pick .hr-av', d).outerHTML = hrAv({ photo }, 'lg'); $('#phs', d).textContent = 'New photo chosen'; } catch (ex) { toast(niceError(ex), true); } }; },
     onSubmit: async x => {
       const changes = {}, priv = {};
       HR_SELF.forEach(([k]) => { const v = (x[k] || '').trim(); if (v !== (me[k] || '')) changes[k] = v; });
