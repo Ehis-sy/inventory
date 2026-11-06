@@ -22,6 +22,7 @@
    - Old **Admins** became **Inventory · Admin**; **Management** became **Inventory · Viewer** and **Purchase Order · Viewer**. Check each person's apps and roles.
    - **Who approves for each service line:** pick a **main** and **backup** admin for every line (for example the QHSE manager for QHSE). Only they (and you) approve that line's requests, stock changes and counts. A line with nobody set comes to you.
    - Optional: set a second person's Access to **Developer** as your backup.
+   - **Inventory access** is now given by group: tick **Eng & Ops** (Thru-Tubing, Wellhead and Slickline together), **QHSE**, or both, with the **Access** button. Everyone who had any of Thru-Tubing, Wellhead or Slickline was given all three during the install.
 9. **PeopleCore** stays **under construction** for everyone except you. To let HR test it: **Nest settings → PeopleCore → Choose testers** (they also need the PeopleCore app on). Open it to everyone there when ready.
 
 **If no Developer can sign in** (for example the Developer left without handing over), run this in Supabase → SQL Editor, with the right email: `update public.profiles set role = 'superadmin' where email = 'name@gankcoenergy.com';`
@@ -34,6 +35,9 @@
 - **Fixes:** a cancelled request no longer shows *Approve & issue*; a cancelled or rejected request sends its planned job back to *Planned* so a new request can be made.
 - **Maintenance:** tick two or more apps to lock together without locking all of Nest.
 - **PeopleCore under construction** until the Developer opens it (Developer and chosen testers can use it).
+- **Sign-up and profile:** sign-up asks for first name, surname, email, phone (optional), password and confirm password (with show/hide). After confirming their email, people **finish their profile**: photo (take or choose) and signature (draw it with a finger or mouse, or upload a photo of it), plus job title if none is set. They can skip and do it later; Nest asks again at their next sign-in until both are in. They can do it while waiting for approval.
+- **My self service is the staff view for everyone:** HR admins and the Developer see exactly what staff see there (no HR panels, admin buttons or Nest admin links). Admin work stays in the Supervisor, Admin and System control views.
+- **One photo everywhere:** My account and PeopleCore → My profile (camera button) change it straight away; it shows in the Nest menu, Team & access and PeopleCore. A photo HR adds to someone's record shows in Nest too.
 - **Four views:** *My self service* (everyone), *Supervisor* (anyone with people under them), *Admin* (HR, by role) and *System control* (admins and roles). The switcher sits at the top of the menu (top of the page on phones).
 - **System control:** admins and **roles with SeamlessHR's permission list** (324 permissions across the modules). Built-in roles: Super Admin, HR Admin, HR Officer, Finance. Locked staff details keep their own permission.
 - **Company settings (SeamlessHR's structure):** departments and units tree with heads and codes, job roles inside departments, locations, regions, cost centres, job families, pay groups and paygrades (G1–G4 bands, UC1), groups, the six **reporting lines** (each person's can be overridden), company documents in folders, organogram.

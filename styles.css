@@ -1541,3 +1541,32 @@ select.mini, select.inline.mini { min-width: 0; width: 96px; padding: 3px 24px 3
 .build-card h1 { margin: 14px 0 8px; font-size: 26px; }
 .build-card p { color: var(--muted); margin: 0 0 22px; line-height: 1.55; }
 @media (max-width: 760px) { .appgrid { min-width: 0; } .devlist li { flex-wrap: wrap; } .devlist .end { width: 100%; justify-content: flex-start; } }
+
+/* 3.0.4 sign-up and profile */
+.pwwrap { position: relative; display: block; } .pwwrap input { padding-right: 42px; }
+.pweye { position: absolute; right: 6px; top: 50%; transform: translateY(-50%); border: 0; background: none; color: var(--muted); padding: 6px; cursor: pointer; display: grid; }
+.pweye svg { width: 18px; height: 18px; } .pweye.on { color: var(--brand); }
+.fielderr { display: block; color: var(--bad); font-size: 12.5px; margin-top: 4px; font-weight: 600; }
+.auth .row2 { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+.setup-steps { display: flex; gap: 8px; margin-bottom: 10px; font-size: 12px; font-weight: 700; letter-spacing: .04em; text-transform: uppercase; }
+.setup-steps span { padding: 4px 10px; border-radius: 999px; background: #EEF0F2; color: var(--muted); } .setup-steps .on { background: var(--gunmetal); color: #fff; } .setup-steps .done { background: var(--ok-bg); color: var(--ok); }
+.setup-photo { display: flex; gap: 16px; align-items: center; margin: 6px 0 16px; }
+.setup-av { width: 84px; height: 84px; border-radius: 50%; flex: none; overflow: hidden; background: var(--gunmetal); color: #fff; display: grid; place-items: center; font-size: 30px; font-family: var(--display); box-shadow: 0 0 0 4px #fff, 0 0 0 5px var(--line); }
+.setup-av img { width: 100%; height: 100%; object-fit: cover; }
+.filebtn { cursor: pointer; }
+.sigpick .sigtabs { margin: 8px 0 10px; } .sigpick .sigtabs button { display: inline-flex; align-items: center; gap: 6px; } .sigpick .sigtabs svg { width: 15px; height: 15px; }
+.sigpadwrap { position: relative; border: 1px dashed #B9BEC4; border-radius: 10px; background: #fff; height: 160px; touch-action: none; }
+.sigpad { width: 100%; height: 100%; display: block; cursor: crosshair; touch-action: none; }
+.sigpad-hint { position: absolute; left: 50%; top: 42%; transform: translate(-50%, -50%); color: #B9BEC4; font-size: 15px; pointer-events: none; }
+.sigpad-line { position: absolute; left: 18px; right: 18px; bottom: 34px; border-top: 1px solid #DADDE1; pointer-events: none; }
+.sigpaper.sm { padding: 12px; margin-top: 8px; } .sigpaper.sm img { max-height: 90px; }
+.setup .btn.primary[type=submit] { width: 100%; margin-top: 8px; }
+.who-ph { width: 26px; height: 26px; border-radius: 50%; object-fit: cover; vertical-align: middle; margin-right: 8px; }
+.team-who { display: flex; gap: 10px; align-items: center; }
+.team-av { width: 34px; height: 34px; border-radius: 50%; flex: none; overflow: hidden; background: #E6E8EB; color: var(--muted); display: grid; place-items: center; font-weight: 700; }
+.team-av img { width: 100%; height: 100%; object-fit: cover; }
+.pc-avedit { position: relative; display: inline-block; cursor: pointer; }
+.pc-avcam { position: absolute; right: -2px; bottom: -2px; width: 30px; height: 30px; border-radius: 50%; background: var(--brand); color: #fff; display: grid; place-items: center; box-shadow: 0 0 0 3px #fff; }
+.pc-avcam svg { width: 15px; height: 15px; }
+@media (max-width: 760px) { .auth .row2 { grid-template-columns: 1fr; } }
+.optl { color: var(--muted); font-weight: 400; }

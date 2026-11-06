@@ -237,6 +237,10 @@ ROUTES.locations = {
 };
 
 // ================================================================ TEAM (3.0.4: the Developer only)
+// 6 Nov: Inventory access is given by group: Engineering & Operations (every team except QHSE) and QHSE
+const ACCESS_GROUPS = [['ops', 'Eng & Ops', 'Engineering & Operations'], ['qhse', 'QHSE', 'QHSE']];
+const groupDepts = g => S.depts.filter(d => (d.access_group || 'ops') === g).map(d => d.id);
+const accessOf = pid => { const mine = S.members.filter(m => m.profile_id === pid).map(m => m.department_id); return ACCESS_GROUPS.map(a => a[0]).filter(g => groupDepts(g).some(id => mine.includes(id))); };
 const APP_LIST = [['inventory', 'Inventory'], ['po', 'Purchase Order'], ['proforma', 'PFI & Quote'], ['people', 'PeopleCore']];
 const appRolePick = (p, k, name) => APP_ROLES[k] ? `<select class="inline mini" ${name ? `name="${name}"` : `data-approle="${k}" data-pid="${p.id}"`}>${APP_ROLES[k].map(([v, l]) => opt(v, l, (p.app_roles || {})[k] || 'staff')).join('')}</select>` : '';
 ROUTES.team = {
@@ -268,15 +272,15 @@ ROUTES.team = {
         <div class="dev-people">${devs.map(d => `<div class="dev-chip"><span class="dev-av">${esc((d.full_name || d.email).slice(0, 1))}</span><div><b>${esc(d.full_name || d.email)}</b>${d.id === S.profile.id ? ' <span class="sub">(you)</span>' : ''}<div class="sub">${esc(d.email)}</div></div></div>`).join('')}</div>
         <p class="muted">The Developer controls all of Nest: sign-ups, apps, roles, settings and Developer tools. ${devs.length < 2 ? 'You can add a second Developer as backup: set their Access to Developer below.' : 'Nest has two Developers, the most it allows.'}</p>
         <div class="actionrow"><button class="btn" id="dev-transfer">${ico('users')}Transfer Developer…</button></div></div></section>
-      <section class="panel"><header><h2>Everyone</h2><span class="meta">${people.length}</span></header><div class="tablewrap"><table class="t stack team-t"><thead><tr><th>Name</th><th>Job title</th><th>Access</th><th>Apps and roles</th><th>Service lines</th><th>Signature</th><th></th></tr></thead><tbody>
+      <section class="panel"><header><h2>Everyone</h2><span class="meta">${people.length}</span></header><div class="tablewrap"><table class="t stack team-t"><thead><tr><th>Name</th><th>Job title</th><th>Access</th><th>Apps and roles</th><th>Inventory access</th><th>Signature</th><th></th></tr></thead><tbody>
       ${people.map(p => { const ls = linesOf(p.id); const off = offDomain.includes(p); const act = !['pending', 'disabled'].includes(p.role);
-        return `<tr><td class="full"><div class="name">${esc(p.full_name || '—')}${p.id === S.profile.id ? ' <span class="sub">(you)</span>' : ''}</div><div class="sub">${esc(p.email)}${off ? ' ' + chip('soon', 'Not a GANKCO email') : ''}</div></td>
+        return `<tr><td class="full"><div class="team-who"><span class="team-av">${p.photo ? `<img src="${esc(p.photo)}" alt="">` : esc(((p.full_name || p.email || '?')[0] || '?').toUpperCase())}</span><div><div class="name">${esc(p.full_name || '—')}${p.id === S.profile.id ? ' <span class="sub">(you)</span>' : ''}</div><div class="sub">${esc(p.email)}${off ? ' ' + chip('soon', 'Not a GANKCO email') : ''}</div></div></div></td>
         <td>${p.job_title ? esc(p.job_title) : act ? chip('soon', 'No job title') : '<span class="sub">—</span>'} <button class="btn small link" data-title="${p.id}">${p.job_title ? 'Edit' : 'Set'}</button></td>
         <td>${p.id !== S.profile.id ? `<select data-role="${p.id}" class="inline">${roleOpts(p).map(k => opt(k, ROLE_LABEL[k], p.role)).join('')}</select>` : chip('out', 'Developer')}</td>
         <td class="apps-cell">${appsCell(p)}</td>
-        <td>${p.role === 'superadmin' ? '<span class="sub">All lines</span>' : ls.length ? ls.map(d => `<span class="linebadge">${esc(lineShort(d))}</span>`).join(' ') : '<span class="sub">None</span>'}</td>
+        <td>${p.role === 'superadmin' ? '<span class="sub">Everything</span>' : (() => { const g = accessOf(p.id); return g.length ? ACCESS_GROUPS.filter(a => g.includes(a[0])).map(a => `<span class="linebadge">${esc(a[1])}</span>`).join(' ') : '<span class="sub">None</span>'; })()}</td>
         <td>${p.signature_id ? chip('ok', 'Added') : '<span class="sub">Not added</span>'}${p.signature_id && p.id !== S.profile.id ? ` <button class="btn small link danger" data-unsig="${p.id}">Remove</button>` : ''}</td>
-        <td class="num nowrap">${off ? `<button class="btn small" data-fix="${p.id}">Fix email</button> ` : ''}${p.role !== 'superadmin' ? `<button class="btn small" data-lines="${p.id}">Lines</button>` : ''}</td></tr>`; }).join('')}
+        <td class="num nowrap">${off ? `<button class="btn small" data-fix="${p.id}">Fix email</button> ` : ''}${p.role !== 'superadmin' ? `<button class="btn small" data-lines="${p.id}">Access</button>` : ''}</td></tr>`; }).join('')}
       </tbody></table></div></section>
       <section class="panel"><header><h2>Who approves for each service line</h2><span class="meta">Inventory</span></header><div class="tablewrap"><table class="t stack"><thead><tr><th>Service line</th><th>Main admin</th><th>Backup admin</th></tr></thead><tbody>
         ${S.depts.map(d => `<tr><td class="name">${esc(d.name)}</td>
@@ -294,7 +298,7 @@ ROUTES.team = {
         <p class="muted">Each app has its own roles. Being an admin in one app gives nothing in another.</p>
         <dl class="kv mt">
         <dt>Inventory · Admin</dt><dd>Manages items, stock, locations, labels and Inventory settings in every line. Approves requests, stock changes and counts only for the lines where you’ve made them main or backup admin. Can switch to <b>My view</b> to work as staff do.</dd>
-        <dt>Inventory · Staff</dt><dd>Day-to-day work in their own service line(s): materials requests, returns, receiving, moving, monthly counts and certificates. Quantity corrections go to the line’s admin.</dd>
+        <dt>Inventory · Staff</dt><dd>Day-to-day work in the teams their access covers (Eng &amp; Ops, QHSE or both): materials requests, returns, receiving, moving, monthly counts and certificates. Quantity corrections go to the line’s admin.</dd>
         <dt>Inventory · Viewer</dt><dd>Sees the Overview, stock, Reports and Sign-offs (with prices) and can add and edit jobs in the Job planner. Can’t raise requests, approve or count.</dd>
         <dt>Purchase Order · Staff</dt><dd>Raises POs with no approval step, and revises, cancels and closes their own. Only you can delete a PO.</dd>
         <dt>Purchase Order · Viewer</dt><dd>Sees the Overview and every PO, and downloads them. Can’t change anything.</dd>
@@ -305,15 +309,15 @@ ROUTES.team = {
   bind(main) {
     if (!isSuper()) return;
     const editLines = (pid, approveAfter) => {
-      const p = S.people[pid]; const cur = S.members.filter(m => m.profile_id === pid).map(m => m.department_id);
-      return modal({ title: approveAfter ? `Approve ${p.full_name || p.email}` : `Service lines for ${p.full_name || p.email}`, submit: approveAfter ? 'Approve' : 'Save',
-        sub: approveAfter ? 'Choose their service line(s), the apps they can open and their role in each. They can sign in straight away.' : 'Staff can change stock only in these lines. Alerts for these lines reach them.',
-        body: `<div class="f">Service lines${S.depts.map(d => `<label class="check"><input type="checkbox" name="d${d.id}" ${cur.includes(d.id) ? 'checked' : ''}> ${esc(d.name)}</label>`).join('')}</div>`
+      const p = S.people[pid]; const cur = accessOf(pid);
+      return modal({ title: approveAfter ? `Approve ${p.full_name || p.email}` : `Inventory access for ${p.full_name || p.email}`, submit: approveAfter ? 'Approve' : 'Save',
+        sub: approveAfter ? 'Choose their Inventory access, the apps they can open and their role in each. They can sign in straight away.' : 'Eng & Ops gives every Engineering & Operations team; QHSE gives QHSE. Tick both for everything.',
+        body: `<div class="f">Inventory access${ACCESS_GROUPS.map(([k, , l]) => `<label class="check"><input type="checkbox" name="g_${k}" ${cur.includes(k) ? 'checked' : ''}> <b>${esc(l)}</b> <span class="sub">${esc(S.depts.filter(d => groupDepts(k).includes(d.id)).map(d => d.short_name || d.name).join(', '))}</span></label>`).join('')}</div>`
           + (approveAfter ? `<div class="pjf-sec">Apps and roles</div>${APP_LIST.map(([k, l]) => `<div class="approw on"><label class="check"><input type="checkbox" name="app_${k}" ${['inventory', 'po'].includes(k) ? 'checked' : ''}> ${esc(l)}</label>${appRolePick(p, k, 'role_' + k)}</div>`).join('')}` : ''),
         onSubmit: async x => {
-          const ids = S.depts.filter(d => x['d' + d.id]).map(d => d.id);
-          if (approveAfter && !ids.length && x.app_inventory) throw new Error('Pick at least one service line.');
-          await q(sb.rpc('set_user_lines', { p_user: pid, p_depts: ids }));
+          const groups = ACCESS_GROUPS.map(a => a[0]).filter(k => x['g_' + k]);
+          if (approveAfter && !groups.length && x.app_inventory) throw new Error('Tick Eng & Ops, QHSE or both.');
+          await q(sb.rpc('set_user_access', { p_user: pid, p_groups: groups }));
           if (approveAfter) {
             if (!APP_LIST.some(([k]) => x['app_' + k])) throw new Error('Tick at least one app.');
             for (const [k] of APP_LIST) {
@@ -322,7 +326,7 @@ ROUTES.team = {
             }
             await q(sb.rpc('set_user_role', { p_user: pid, p_role: 'staff' }));
           }
-          toast(approveAfter ? 'Approved' : 'Service lines saved'); await loadLookups(); render({ quiet: true });
+          toast(approveAfter ? 'Approved' : 'Access saved'); await loadLookups(); render({ quiet: true });
         } });
     };
     $$('[data-approve]', main).forEach(b => b.onclick = () => editLines(b.dataset.approve, true));
@@ -633,17 +637,20 @@ ROUTES.account = {
   async load() {
     const p = S.profile;
     return topbar('My account') + `<div class="cols"><section class="panel"><header><h2>Profile</h2></header><form class="body" id="prof">
-        <label class="f">Full name<input type="text" name="name" value="${esc(p.full_name)}" required></label>
-        <dl class="kv"><dt>Email</dt><dd>${esc(p.email)}</dd><dt>Job title</dt><dd>${p.job_title ? esc(p.job_title) : '<span class="sub">Not set yet</span>'}<div class="sub">Set by your admin. It’s printed under your name when you sign.</div></dd><dt>Access</dt><dd>${ROLE_LABEL[p.role]}</dd><dt>Service lines</dt><dd>${isSuper() ? 'All' : esc(myLineIds().map(lineName).join(', ') || 'None yet')}</dd></dl>
-        <button class="btn primary mt" type="submit">Save name</button></form></section>
+        <div class="setup-photo"><span class="setup-av" id="acc-av">${p.photo ? `<img src="${esc(p.photo)}" alt="">` : `<b>${esc(((p.first_name || p.full_name || p.email || '?')[0] || '?').toUpperCase())}</b>`}</span>
+          <div><b>Your photo</b><div class="sub">Shows in Nest and PeopleCore.</div><label class="btn small filebtn mt">${ico('up')}${p.photo ? 'Change photo' : 'Add a photo'}<input type="file" accept="image/*" id="acc-ph" hidden></label></div></div>
+        <div class="row2"><label class="f">First name<input type="text" name="first" value="${esc(p.first_name || '')}" required></label><label class="f">Surname<input type="text" name="last" value="${esc(p.last_name || '')}" required></label></div>
+        <label class="f">Phone <span class="optl">(optional)</span><input type="tel" name="phone" value="${esc(p.phone || '')}"></label>
+        <dl class="kv"><dt>Email</dt><dd>${esc(p.email)}</dd><dt>Job title</dt><dd>${p.job_title ? esc(p.job_title) : '<span class="sub">Not set yet</span>'}<div class="sub">Set by the Developer. It’s printed under your name when you sign.</div></dd><dt>Access</dt><dd>${ROLE_LABEL[p.role]}</dd><dt>Inventory access</dt><dd>${isSuper() ? 'Everything' : esc(myAccessLabel() || 'None yet')}</dd></dl>
+        <button class="btn primary mt" type="submit">Save</button></form></section>
       <section class="panel"><header><h2>Change password</h2></header><form class="body" id="pw">
         <label class="f">New password<span class="hint">At least 8 characters.</span><input type="password" name="pw" minlength="8" autocomplete="new-password" required></label>
         <button class="btn primary" type="submit">Change password</button></form></section></div>
       <section class="panel"><header><h2>My signature</h2>${p.signature_id ? chip('ok', 'Added') : chip('soon', 'Not added')}</header><div class="body">
         <p class="muted">Used when you sign documents in Nest: reports you prepare or sign off, monthly counts, Load-out Manifests and receipts. Under it Nest prints your name, job title and “Signed in GANKCO Nest” with the date and time.</p>
         ${sigBox(await mySigImage(), 'big')}
-        <div class="actionrow mt"><button class="btn primary" id="sigup">${ico('up')}${p.signature_id ? 'Replace signature' : 'Upload signature'}</button>${p.signature_id ? '<button class="btn" id="sigfit">Adjust size and position</button><button class="btn danger" id="sigrm">Remove</button>' : ''}</div>
-        <p class="sub">Tip: sign on plain white paper with a dark pen, then take a straight photo in good light or scan it.</p></div></section>
+        <div class="actionrow mt"><button class="btn primary" id="sigup">${ico('up')}${p.signature_id ? 'Replace signature' : 'Add signature'}</button>${p.signature_id ? '<button class="btn" id="sigfit">Adjust size and position</button><button class="btn danger" id="sigrm">Remove</button>' : ''}</div>
+        <p class="sub">Draw it with your finger or mouse, or upload a photo of it signed on plain white paper with a dark pen.</p></div></section>
       ${myAlertsPanel()}
       <section class="panel"><header><h2>About Nest</h2></header><div class="body">
         <dl class="kv"><dt>App</dt><dd>${esc(CFG.APP_NAME)} v${esc(CFG.VERSION || '')}</dd><dt>Company</dt><dd>${esc(CFG.COMPANY || '')}</dd><dt>Credit</dt><dd>${esc(CREDIT)}</dd></dl></div></section>
@@ -651,10 +658,12 @@ ROUTES.account = {
   },
   bind(main) {
     bindMyAlerts(main);
+    const reload = async () => { S.profile = await q(sb.from('profiles').select('*').eq('id', S.profile.id).maybeSingle()); await loadLookups(); S.shellReady = false; render({ quiet: true }); };
+    $('#acc-ph', main).onchange = async e => { try { const ph = await hrPhotoData(e.target.files[0]); await q(sb.rpc('my_profile_save', { p: { photo: ph } })); toast('Photo saved'); if (typeof pcInvalidate === 'function') pcInvalidate(); await reload(); } catch (ex) { toast(niceError(ex), true); } };
     $('#prof', main).onsubmit = async e => {
-      e.preventDefault(); const name = new FormData(e.target).get('name').trim();
-      try { await q(sb.from('profiles').update({ full_name: name }).eq('id', S.profile.id)); await sb.auth.updateUser({ data: { full_name: name } });
-        S.profile.full_name = name; S.shellReady = false; toast('Name saved'); render(); } catch (ex) { toast(niceError(ex), true); }
+      e.preventDefault(); const d = Object.fromEntries(new FormData(e.target));
+      try { await q(sb.rpc('my_profile_save', { p: { first_name: d.first, last_name: d.last, phone: d.phone || '' } }));
+        await sb.auth.updateUser({ data: { full_name: `${d.first.trim()} ${d.last.trim()}` } }); toast('Saved'); await reload(); } catch (ex) { toast(niceError(ex), true); }
     };
     $('#pw', main).onsubmit = async e => {
       e.preventDefault(); const pw = new FormData(e.target).get('pw');

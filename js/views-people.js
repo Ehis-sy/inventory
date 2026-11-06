@@ -21,7 +21,10 @@ const MARITAL = ['Single', 'Married', 'Divorced', 'Separated', 'Widowed'];
 const GENDERS = ['Female', 'Male'];
 const TITLES = ['Mr', 'Mrs', 'Ms', 'Miss', 'Dr', 'Engr', 'Prof'];
 
-const hrRole = () => realSuper() ? 'hr_admin' : (S.hr.roles.find(r => r.profile_id === S.profile?.id)?.role || null);
+// 3.0.4: in My self service everyone sees exactly what staff see, admins and the Developer included
+const pcSelfView = () => S.shellApp === 'people' && (!S.pc || S.pc.view === 'self');
+const hrRoleReal = () => realSuper() ? 'hr_admin' : (S.hr.roles.find(r => r.profile_id === S.profile?.id)?.role || null);
+const hrRole = () => pcSelfView() ? null : hrRoleReal();
 const isHR = () => !!hrRole();
 const isHRAdmin = () => hrRole() === 'hr_admin';
 const hrMe = () => S.hr.me;

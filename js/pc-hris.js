@@ -194,7 +194,7 @@ async function pcProfile(id, mode, sec) {
     e.status !== 'active' && pcCan('activate-employee') && `<button class="btn" data-status="active">Activate</button>`,
     e.status !== 'exited' && pcCan('mark-employee-as-exited') && `<button class="btn danger" data-status="exited">Mark as exited</button>`].filter(Boolean).join('') : '';
   return topbar(selfMode ? 'My profile' : esc(hrFullName(e)), pcEmpSub(c) || 'Employee', selfMode ? `<button class="btn primary" data-selfchg>${ico('edit')}Update my details</button>` : `<a class="btn" href="${admin ? '#/people/admin/hris/employees' : '#/people/sup/team'}">Back</a>`) + (selfMode && hrisCfg().profile_approval !== false ? '<div class="notice">Changes you make go to HR for approval before they show.</div>' : '') +
-    `<div class="pc-prof"><aside class="pc-prof-side"><section class="panel"><div class="pc-prof-card">${hrAv(c)}<h2>${esc(c.name)}</h2><div class="sub">${esc(c.title || '')}</div>
+    `<div class="pc-prof"><aside class="pc-prof-side"><section class="panel"><div class="pc-prof-card">${selfMode ? `<label class="pc-avedit" title="Change your photo">${hrAv(c)}<span class="pc-avcam">${ico('up')}</span><input type="file" accept="image/*" data-myphoto hidden></label>` : hrAv(c)}<h2>${esc(c.name)}</h2><div class="sub">${esc(c.title || '')}</div>
         <div style="margin:10px 0 4px">${pcStatus(e.status)} ${pcRing(e.completeness, 38)}</div><div class="sub">${esc(e.emp_no || '')}${c.work_email ? ' · ' + esc(c.work_email) : ''}</div></div>
         <nav class="pc-prof-nav">${show.map(([k, l], i) => `<a href="#sec-${k}" data-jump="${k}" class="${(sec ? k === sec : i === 0) ? 'on' : ''}">${esc(l)}${pcSecCount(e, k)}</a>`).join('')}<a href="#" data-jump="*">Show everything</a></nav></section>
         ${acts ? `<div class="pc-prof-acts">${acts}</div>` : ''}</aside>
@@ -203,6 +203,8 @@ async function pcProfile(id, mode, sec) {
 
 function pcBindProfile(main, id, mode) {
   const e = S.pc.emp; const back = () => { pcInvalidate(); render({ quiet: true }); };
+  // 3.0.4: your own photo saves straight away (Nest and PeopleCore share it)
+  const mp = $('[data-myphoto]', main); if (mp) mp.onchange = async ev => { try { const ph = await hrPhotoData(ev.target.files[0]); await q(sb.rpc('my_profile_save', { p: { photo: ph } })); S.profile.photo = ph; S.shellReady = false; toast('Photo saved'); back(); } catch (x) { toast(niceError(x), true); } };
   main.addEventListener('click', async ev => {
     const j = ev.target.closest('[data-jump]'); if (j) { ev.preventDefault(); const k = j.dataset.jump; $$('.pc-prof-main > section', main).forEach(x => x.hidden = k !== '*' && x.id !== 'sec-' + k); $$('[data-jump]', main).forEach(a => a.classList.toggle('on', a === j)); S.pc.profSec = k; if (innerWidth < 900) $('.pc-prof-main', main).scrollIntoView({ behavior: 'smooth' }); return; }
     const rv = ev.target.closest('[data-reveal]'); if (rv) { const s = rv.previousElementSibling; const shown = s.textContent !== '••••••'; s.textContent = shown ? '••••••' : s.dataset.secret; rv.textContent = shown ? 'Show' : 'Hide'; return; }

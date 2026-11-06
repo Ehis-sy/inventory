@@ -82,6 +82,7 @@ const myLineIds = () => isSuper() ? S.depts.map(d => d.id) : viewAsOn() ? (S.vie
 const inLine = d => myLineIds().includes(+d);
 const canAct = d => isAdmin() || (['staff', 'admin'].includes(invRole()) && inLine(d));
 const canAdmin = d => isAdmin();
+const myAccessLabel = () => { const ids = myLineIds(); const has = g => S.depts.some(d => (d.access_group || 'ops') === g && ids.includes(d.id)); return [has('ops') ? 'Eng & Ops' : '', has('qhse') ? 'QHSE' : ''].filter(Boolean).join(', '); };
 const myRoleLabel = () => isSuper() ? 'Developer' : S.shellApp === 'admin' || S.shellApp === 'people' ? 'Staff' : (ROLE_LABEL[appRole(curApp())] || 'Staff') + (invMyView() && curApp() === 'inventory' ? ' · My view' : '');
 // approving a line's requests and counts: its main or backup admin, or the Developer
 const approverLineIds = () => isSuper() ? S.depts.map(d => d.id) : !isAdmin() ? [] : viewAsOn() ? (S.viewAs.lines || []).map(Number)
@@ -263,7 +264,7 @@ async function loadLookups() {
     q(sb.from('departments').select('*').order('sort')),
     q(sb.from('categories').select('*').order('sort')),
     q(sb.from('locations').select('*').order('is_placeholder').order('name')),
-    q(sb.from('profiles').select('id,full_name,email,role,created_at,apps,app_roles,job_title,signature_id')),
+    q(sb.from('profiles').select('id,full_name,first_name,last_name,email,role,created_at,apps,app_roles,job_title,signature_id,photo')),
     q(sb.from('memberships').select('*')),
     q(sb.from('app_settings').select('*')),
     q(sb.from('po_service_lines').select('*').order('sort')).catch(() => []),
@@ -424,6 +425,8 @@ async function boot() {
   try {
     S.profile = await q(sb.from('profiles').select('*').eq('id', S.session.user.id).maybeSingle());
   } catch (e) { return renderAuth('signin', niceError(e)); }
+  // 3.0.4: photo and signature, straight after the first sign-in (can be skipped and done later)
+  if (typeof needsSetup === 'function' && needsSetup() && !setupSkipped()) return renderSetup();
   if (!isActive()) return renderPending();
   if (S.viewAs && !realSuper()) setViewAs(null);
   try { await loadLookups(); } catch (e) { return renderAuth('signin', niceError(e)); }
@@ -457,12 +460,16 @@ function renderAuth(mode = 'signin', message = '', ok = false) {
       <label class="f">Password<input type="password" name="password" autocomplete="current-password" required></label>
       <button class="btn primary" type="submit">Sign in</button>
       <div class="alt"><a href="#" data-m="signup">Create an account</a><a href="#" data-m="forgot">Forgot password?</a></div></form>`);
-  if (mode === 'signup') authShell(`<form id="f">
-      <h1>Create an account</h1><p class="sub">Use your ${esc(CFG.SIGNUP_DOMAIN ? '@' + CFG.SIGNUP_DOMAIN : 'company')} email (no company email? use the one HR has for you). An admin approves new accounts and assigns your service line.</p>${note}
-      <label class="f">Full name<input type="text" name="name" autocomplete="name" required></label>
+  if (mode === 'signup') authShell(`<form id="f" novalidate>
+      <h1>Create an account</h1><p class="sub">Use your ${esc(CFG.SIGNUP_DOMAIN ? '@' + CFG.SIGNUP_DOMAIN : 'company')} email (no company email? use the one HR has for you). The Developer approves new accounts.</p>${note}
+      <div class="row2"><label class="f">First name<input type="text" name="first" autocomplete="given-name" required></label>
+        <label class="f">Surname<input type="text" name="last" autocomplete="family-name" required></label></div>
       <label class="f">Email<input type="email" name="email" autocomplete="email" required></label>
-      <label class="f">Password<span class="hint">At least 8 characters.</span><input type="password" name="password" autocomplete="new-password" minlength="8" required></label>
+      <label class="f">Phone <span class="optl">(optional)</span><input type="tel" name="phone" autocomplete="tel" placeholder="e.g. 0803 000 0000"></label>
+      <label class="f">Password<span class="hint">At least 8 characters.</span><span class="pwwrap"><input type="password" name="password" autocomplete="new-password" minlength="8" required><button type="button" class="pweye" aria-label="Show password">${ico('eye')}</button></span></label>
+      <label class="f">Confirm password<span class="pwwrap"><input type="password" name="password2" autocomplete="new-password" required><button type="button" class="pweye" aria-label="Show password">${ico('eye')}</button></span><span class="fielderr" id="pwmatch" hidden>The passwords don’t match.</span></label>
       <button class="btn primary" type="submit">Create account</button>
+      <p class="sub mt">Next, after you confirm your email and sign in, you’ll add your photo and signature.</p>
       <div class="alt"><a href="#" data-m="signin">I already have an account</a></div></form>`);
   if (mode === 'forgot') authShell(`<form id="f">
       <h1>Reset password</h1><p class="sub">We’ll email you a link to set a new password.</p>${note}
@@ -470,6 +477,8 @@ function renderAuth(mode = 'signin', message = '', ok = false) {
       <button class="btn primary" type="submit">Send reset link</button>
       <div class="alt"><a href="#" data-m="signin">Back to sign in</a></div></form>`);
   $$('[data-m]').forEach(a => a.onclick = e => { e.preventDefault(); renderAuth(a.dataset.m); });
+  $$('.pweye').forEach(b => b.onclick = () => { const i = b.previousElementSibling; i.type = i.type === 'password' ? 'text' : 'password'; b.classList.toggle('on', i.type === 'text'); });
+  if (mode === 'signup') { const f2 = $('#f'); const chk = () => { const m = $('#pwmatch'); m.hidden = !f2.password2.value || f2.password2.value === f2.password.value; }; f2.password2.oninput = chk; f2.password.oninput = chk; }
   if (mode === 'signin') signinMaintNotice();
   const f = $('#f');
   f.onsubmit = async e => {
@@ -481,9 +490,13 @@ function renderAuth(mode = 'signin', message = '', ok = false) {
         if (error) throw new Error(/invalid login/i.test(error.message) ? 'Wrong email or password.' : /not confirmed/i.test(error.message) ? 'Confirm your email first: open the link we sent you.' : error.message);
       } else if (mode === 'signup') {
         // 3.0: the email domain is checked by the database (it also lets in the email HR has on someone's PeopleCore record)
+        const first = (d.first || '').trim(), last = (d.last || '').trim();
+        if (!first || !last) throw new Error('Enter your first name and surname.');
+        if (!/^\S+@\S+\.\S+$/.test((d.email || '').trim())) throw new Error('Enter a valid email address.');
         if (d.password.length < 8) throw new Error('Use at least 8 characters for the password.');
+        if (d.password !== d.password2) throw new Error('The passwords don’t match.');
         const { data, error } = await sb.auth.signUp({ email: d.email.trim(), password: d.password,
-          options: { data: { full_name: d.name.trim() }, emailRedirectTo: location.origin + location.pathname } });
+          options: { data: { full_name: `${first} ${last}`, first_name: first, last_name: last, phone: (d.phone || '').trim() }, emailRedirectTo: location.origin + location.pathname } });
         if (error) throw new Error(/database error|only gankco/i.test(error.message) ? `Use your GANKCO email (@${CFG.SIGNUP_DOMAIN || 'gankcoenergy.com'}). If you don’t have one, ask HR to put your email on your PeopleCore record first.` : error.message);
         if (!data.session) return renderAuth('signin', 'Account created. Check your email for a confirmation link, then sign in.', true);
       } else {
@@ -525,11 +538,13 @@ function renderPending() {
   const disabled = S.profile?.role === 'disabled';
   authShell(`<div class="card">
     <h1>${disabled ? 'Access removed' : 'Waiting for approval'}</h1>
-    <p class="sub">${disabled ? 'An admin has turned off access for this account. Contact your admin if this is a mistake.'
-      : 'Your account is set up. An admin needs to approve it and assign your service line before you can see the inventory.'}</p>
+    <p class="sub">${disabled ? 'The Developer has turned off access for this account. Contact them if this is a mistake.'
+      : 'Your account is set up. The Developer needs to approve it and give you access before you can use Nest.'}</p>
+    ${!disabled && typeof needsSetup === 'function' ? (needsSetup() ? '<div class="notice">While you wait, add your photo and signature. <a href="#" id="setup">Finish your profile</a></div>' : '<div class="notice ok">Your photo and signature are in. You’re all set for when you’re approved.</div>') : ''}
     <p class="muted">Signed in as ${esc(S.session.user.email)}</p>
     <div class="actionrow"><button class="btn primary" id="again">Check again</button><button class="btn" id="out">Sign out</button></div></div>`);
   $('#again').onclick = boot; $('#out').onclick = () => sb.auth.signOut();
+  const su = $('#setup'); if (su) su.onclick = e => { e.preventDefault(); renderSetup(); };
 }
 
 // ---------------------------------------------------------------- shell
@@ -570,8 +585,8 @@ function shell() {
       <nav class="nav">${top || ''}${main.map(link).join('')}
         ${setup.length ? `<div class="nav-group">${S.shellApp === 'admin' ? 'Apps' : navItems().setupLabel || 'Setup'}</div>${setup.map(link).join('')}` : ''}</nav>
       <div class="side-foot">${CFG.TAGLINE ? `<div class="motto">${esc(CFG.TAGLINE)}</div>` : ''}
-        <a class="who" href="#/account">${esc(p.full_name || p.email)}</a><div class="role">${S.shellApp === 'people' && typeof hrRole === 'function' ? esc(hrRole() === 'hr_admin' ? 'HR admin' : hrRole() === 'hr_officer' ? 'HR officer' : S.hr?.me?.card?.title || ROLE_LABEL[role()]) : esc(myRoleLabel()) + (S.shellApp !== 'po' && S.shellApp !== 'admin' && !isSuper() && !isMgmt() ? ' · ' + esc(myLineIds().map(lineShort).join(', ') || 'no service line') : '')}</div>
-        ${realSuper() ? `<button class="btn small viewas-btn" id="viewas">${S.viewAs ? 'Change view' : 'View as…'}</button>` : ''}
+        <a class="who" href="#/account">${p.photo ? `<img class="who-ph" src="${esc(p.photo)}" alt="">` : ''}${esc(p.full_name || p.email)}</a><div class="role">${S.shellApp === 'people' && typeof hrRole === 'function' ? esc(hrRole() === 'hr_admin' ? 'HR admin' : hrRole() === 'hr_officer' ? 'HR officer' : S.hr?.me?.card?.title || ROLE_LABEL[role()]) : esc(myRoleLabel()) + (S.shellApp !== 'po' && S.shellApp !== 'admin' && !isSuper() && !isMgmt() ? ' · ' + esc(myAccessLabel() || 'no Inventory access') : '')}</div>
+        ${realSuper() && S.shellApp !== 'people' ? `<button class="btn small viewas-btn" id="viewas">${S.viewAs ? 'Change view' : 'View as…'}</button>` : ''}
         <a href="#" id="signout">Sign out</a></div>
     </aside>${viewAsBar()}
     <main id="main"></main>

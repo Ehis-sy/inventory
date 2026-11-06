@@ -15,7 +15,7 @@ const pcAcc = () => {
   if (S.viewAs && realSuper() && S.viewAs.role !== 'superadmin') return { ...a, perms: [], admin: false, system: false, super: false };
   return a;
 };
-const pcCan = (...perms) => { const a = pcAcc(); return perms.flat().some(p => a.perms.includes(p)); };
+const pcCan = (...perms) => { if (S.pc.view === 'self') return false; const a = pcAcc(); return perms.flat().some(p => a.perms.includes(p)); };
 const pcInvalidate = () => { S.pc.accAt = 0; S.pc.lookAt = 0; hrInvalidate(); };
 const pcRefresh = () => { pcInvalidate(); render({ quiet: true }); };
 
@@ -95,7 +95,7 @@ function peopleNav() {
   const main = [['people', 'Discover', 'compass'], ['people/me', 'My profile', 'user'], ['people/work', 'Work', 'kit'],
     ...(inWork ? HR_WORK.map(([k, l]) => ['people/work/' + k, l, null]) : []),
     ['people/pay', 'Pay', 'pay'], ['people/approvals', 'Approvals', 'check'], ['people/company', 'Company', 'building']];
-  return { top, main, setup: isSuper() ? [['team', 'Nest admin', 'users']] : [], setupLabel: 'Nest' };
+  return { top, main, setup: [], setupLabel: 'Nest' };
 }
 function peopleBottomBar() {
   const v = S.pc.view;
